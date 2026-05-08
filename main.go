@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -60,53 +61,56 @@ func main() {
 
 	var isRecording atomic.Bool
 
-	if err := keyboard.Start(
-		func() {
-			if isRecording.CompareAndSwap(false, true) {
-				if err := recorder.Start(); err != nil {
-					fmt.Fprintf(os.Stderr, "\nrecorder start: %v\n", err)
-					isRecording.Store(false)
-					return
-				}
-				playSound("/System/Library/Sounds/Tink.aiff")
-				fmt.Print("\r\033[K● Recording...")
+	onPress := func() {
+		if isRecording.CompareAndSwap(false, true) {
+			if err := recorder.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "\nrecorder start: %v\n", err)
+				isRecording.Store(false)
+				return
 			}
-		},
-		func() {
-			if isRecording.CompareAndSwap(true, false) {
-				playSound("/System/Library/Sounds/Pop.aiff")
-				wavData, err := recorder.Stop()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
-					return
-				}
-				// skip recordings shorter than ~0.3 s
-				if len(wavData) < 44+16000*2/3 {
-					fmt.Print("\r\033[K(too short)\n")
-					return
-				}
-				fmt.Print("\r\033[K◌ Transcribing...")
-				text, err := client.Transcribe(wavData)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "\ntranscription: %v\n", err)
-					return
-				}
-				text = strings.TrimSpace(text)
-				if text == "" {
-					fmt.Print("\r\033[K(no speech detected)\n")
-					return
-				}
-				fmt.Printf("\r\033[K✓ %s\n", text)
-				if err := paste.Paste(text); err != nil {
-					fmt.Fprintf(os.Stderr, "paste: %v\n", err)
-				}
+			playSound("/System/Library/Sounds/Tink.aiff")
+			fmt.Print("\r\033[K● Recording...")
+		}
+	}
+	onRelease := func() {
+		if isRecording.CompareAndSwap(true, false) {
+			playSound("/System/Library/Sounds/Pop.aiff")
+			wavData, err := recorder.Stop()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
+				return
 			}
-		},
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "keyboard hook: %v\n\n", err)
-		fmt.Fprintln(os.Stderr, "Grant access in: System Settings → Privacy & Security → Accessibility")
-		fmt.Fprintln(os.Stderr, "Add your terminal app (Terminal / iTerm2), then relaunch whisprgo.")
-		os.Exit(1)
+			// skip recordings shorter than ~0.3 s
+			if len(wavData) < 44+16000*2/3 {
+				fmt.Print("\r\033[K(too short)\n")
+				return
+			}
+			fmt.Print("\r\033[K◌ Transcribing...")
+			text, err := client.Transcribe(wavData)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\ntranscription: %v\n", err)
+				return
+			}
+			text = strings.TrimSpace(text)
+			if text == "" {
+				fmt.Print("\r\033[K(no speech detected)\n")
+				return
+			}
+			fmt.Printf("\r\033[K✓ %s\n", text)
+			if err := paste.Paste(text); err != nil {
+				fmt.Fprintf(os.Stderr, "paste: %v\n", err)
+			}
+		}
+	}
+
+	for {
+		if err := keyboard.Start(onPress, onRelease); err == nil {
+			break
+		}
+		fmt.Fprintf(os.Stderr, "keyboard hook: accessibility access required\n")
+		fmt.Fprintf(os.Stderr, "Grant access in: System Settings → Privacy & Security → Accessibility → add whisprgo\n")
+		fmt.Fprintf(os.Stderr, "Retrying in 30s...\n")
+		time.Sleep(30 * time.Second)
 	}
 
 	fmt.Println("whisprgo ready — hold [fn] to record, release to transcribe. Ctrl-C to quit.")
