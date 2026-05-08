@@ -6,7 +6,7 @@ Powered by [Groq](https://groq.com) + Whisper — transcription is typically don
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS on Apple Silicon (M1 or later)
 - A free [Groq API key](https://console.groq.com)
 
 ## Installation
@@ -35,8 +35,6 @@ brew services start whisprgo
 **3. Grant Accessibility access** (required for the Fn-key hook):
 
 System Settings → Privacy & Security → Accessibility → click + → add `/opt/homebrew/bin/whisprgo`
-
-On Intel Macs the path is `/usr/local/bin/whisprgo`.
 
 Once granted, whisprgo is ready — no restart needed.
 

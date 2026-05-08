@@ -13,15 +13,8 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-15
-            arch: arm64
-          - os: macos-13
-            arch: amd64
+    name: Build
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
@@ -38,16 +31,16 @@ jobs:
 
       - name: Package
         run: |
-          tar czf whisprgo-darwin-${{ matrix.arch }}.tar.gz whisprgo
-          shasum -a 256 whisprgo-darwin-${{ matrix.arch }}.tar.gz \
-            | awk '{print $1}' > whisprgo-darwin-${{ matrix.arch }}.sha256
+          tar czf whisprgo-darwin-arm64.tar.gz whisprgo
+          shasum -a 256 whisprgo-darwin-arm64.tar.gz \
+            | awk '{print $1}' > whisprgo-darwin-arm64.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.arch }}
+          name: dist
           path: |
-            whisprgo-darwin-${{ matrix.arch }}.tar.gz
-            whisprgo-darwin-${{ matrix.arch }}.sha256
+            whisprgo-darwin-arm64.tar.gz
+            whisprgo-darwin-arm64.sha256
 
   release:
     name: Publish
@@ -59,23 +52,19 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
-          merge-multiple: true
+          name: dist
           path: dist
 
       - name: Compute variables
         run: |
           echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           echo "SHA256_ARM64=$(cat dist/whisprgo-darwin-arm64.sha256)" >> "$GITHUB_ENV"
-          echo "SHA256_AMD64=$(cat dist/whisprgo-darwin-amd64.sha256)" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            dist/whisprgo-darwin-arm64.tar.gz
-            dist/whisprgo-darwin-amd64.tar.gz
+          files: dist/whisprgo-darwin-arm64.tar.gz
 
       - name: Update Homebrew tap
         env:
@@ -87,7 +76,6 @@ jobs:
           sed \
             -e "s/VERSION_PLACEHOLDER/$VERSION/g" \
             -e "s/SHA256_ARM64_PLACEHOLDER/$SHA256_ARM64/g" \
-            -e "s/SHA256_AMD64_PLACEHOLDER/$SHA256_AMD64/g" \
             homebrew/whisprgo.rb.template \
             > homebrew-tap/Formula/whisprgo.rb
 

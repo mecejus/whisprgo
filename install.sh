@@ -8,17 +8,12 @@ CONFIG_PATH="$HOME/.config/whisprgo/config.json"
 LOG_PATH="$HOME/.config/whisprgo/whisprgo.log"
 GITHUB_REPO="mecejus/whisprgo"
 
-# ── detect architecture ───────────────────────────────────────────────────────
+# ── check architecture ────────────────────────────────────────────────────────
 
-ARCH=$(uname -m)
-case "$ARCH" in
-    arm64)  GOARCH="arm64" ;;
-    x86_64) GOARCH="amd64" ;;
-    *)
-        echo "Error: Unsupported architecture: $ARCH"
-        exit 1
-        ;;
-esac
+if [ "$(uname -m)" != "arm64" ]; then
+    echo "Error: whisprgo requires Apple Silicon (arm64). Intel Macs are not supported."
+    exit 1
+fi
 
 # ── get binary ────────────────────────────────────────────────────────────────
 
@@ -35,7 +30,7 @@ with urllib.request.urlopen('https://api.github.com/repos/${GITHUB_REPO}/release
 
     [ -z "$LATEST_TAG" ] && return 1
 
-    TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}/whisprgo-darwin-${GOARCH}.tar.gz"
+    TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}/whisprgo-darwin-arm64.tar.gz"
     echo "→ Downloading whisprgo ${LATEST_TAG} (${GOARCH})..."
     curl -fsSL "$TARBALL_URL" | tar xz -C "$WORK_DIR" || return 1
     cp "$WORK_DIR/whisprgo" ./whisprgo
