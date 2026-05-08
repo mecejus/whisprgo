@@ -1,0 +1,49 @@
+class Whisprgo < Formula
+  desc "Hold Fn to record your voice — transcribed and pasted in under a second"
+  homepage "https://github.com/mecejus/whisprgo"
+  version "VERSION_PLACEHOLDER"
+  license "MIT"
+
+  on_arm do
+    url "https://github.com/mecejus/whisprgo/releases/download/vVERSION_PLACEHOLDER/whisprgo-darwin-arm64.tar.gz"
+    sha256 "SHA256_ARM64_PLACEHOLDER"
+  end
+
+  on_intel do
+    url "https://github.com/mecejus/whisprgo/releases/download/vVERSION_PLACEHOLDER/whisprgo-darwin-amd64.tar.gz"
+    sha256 "SHA256_AMD64_PLACEHOLDER"
+  end
+
+  depends_on :macos
+  depends_on "portaudio"
+
+  def install
+    bin.install "whisprgo"
+  end
+
+  service do
+    run [opt_bin/"whisprgo"]
+    keep_alive true
+    log_path var/"log/whisprgo.log"
+    error_log_path var/"log/whisprgo.log"
+  end
+
+  def caveats
+    <<~EOS
+      Before starting whisprgo, save your Groq API key:
+        mkdir -p ~/.config/whisprgo
+        printf '{"api_key":"YOUR_GROQ_API_KEY"}' > ~/.config/whisprgo/config.json
+        chmod 600 ~/.config/whisprgo/config.json
+
+      Then start the service:
+        brew services start whisprgo
+
+      Grant Accessibility access so the Fn-key hook works:
+        System Settings → Privacy & Security → Accessibility → click + → add #{opt_bin}/whisprgo
+    EOS
+  end
+
+  test do
+    assert_predicate bin/"whisprgo", :exist?
+  end
+end

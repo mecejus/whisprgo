@@ -6,23 +6,60 @@ PLIST_LABEL="com.whisprgo.agent"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 CONFIG_PATH="$HOME/.config/whisprgo/config.json"
 LOG_PATH="$HOME/.config/whisprgo/whisprgo.log"
+GITHUB_REPO="mecejus/whisprgo"
 
-# ── dependencies ──────────────────────────────────────────────────────────────
+# ── detect architecture ───────────────────────────────────────────────────────
 
-if ! command -v go &>/dev/null; then
-    echo "Error: Go not found. Install with: brew install go"
-    exit 1
+ARCH=$(uname -m)
+case "$ARCH" in
+    arm64)  GOARCH="arm64" ;;
+    x86_64) GOARCH="amd64" ;;
+    *)
+        echo "Error: Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+# ── get binary ────────────────────────────────────────────────────────────────
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+download_binary() {
+    echo "→ Fetching latest release..."
+    LATEST_TAG=$(python3 -c "
+import urllib.request, json
+with urllib.request.urlopen('https://api.github.com/repos/${GITHUB_REPO}/releases/latest') as r:
+    print(json.load(r)['tag_name'])
+" 2>/dev/null) || return 1
+
+    [ -z "$LATEST_TAG" ] && return 1
+
+    TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}/whisprgo-darwin-${GOARCH}.tar.gz"
+    echo "→ Downloading whisprgo ${LATEST_TAG} (${GOARCH})..."
+    curl -fsSL "$TARBALL_URL" | tar xz -C "$WORK_DIR" || return 1
+    cp "$WORK_DIR/whisprgo" ./whisprgo
+}
+
+build_from_source() {
+    echo "→ Building from source..."
+    if ! command -v go &>/dev/null; then
+        echo "Error: Go not found. Install with: brew install go"
+        exit 1
+    fi
+    if ! pkg-config --exists portaudio-2.0 2>/dev/null; then
+        echo "Error: portaudio not found. Install with: brew install portaudio"
+        exit 1
+    fi
+    go build -ldflags="-s -w" -o whisprgo .
+}
+
+if [ "${1}" = "--build-from-source" ]; then
+    build_from_source
+elif ! download_binary; then
+    echo "  (no pre-built binary found, building from source)"
+    build_from_source
 fi
-
-if ! pkg-config --exists portaudio-2.0 2>/dev/null; then
-    echo "Error: portaudio not found. Install with: brew install portaudio"
-    exit 1
-fi
-
-# ── build ─────────────────────────────────────────────────────────────────────
-
-echo "→ Building whisprgo..."
-go build -o whisprgo .
 
 # ── api key ───────────────────────────────────────────────────────────────────
 
@@ -131,7 +168,7 @@ if [ -n "$SERVICE_PID" ]; then
 else
     echo "✗ whisprgo installed, but the service did not stay running."
     echo ""
-    echo "  Most likely Accessibility was revoked when the binary was rebuilt."
+    echo "  Most likely Accessibility was revoked when the binary was replaced."
     echo "  Fix:"
     echo "    1. System Settings → Privacy & Security → Accessibility"
     echo "       Remove any old 'whisprgo' entry, then re-add: $BINARY_DEST"

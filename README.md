@@ -7,44 +7,58 @@ Powered by [Groq](https://groq.com) + Whisper — transcription is typically don
 ## Requirements
 
 - macOS (Apple Silicon or Intel)
-- [Go](https://go.dev) 1.21+
-- [PortAudio](https://www.portaudio.com) (audio capture)
 - A free [Groq API key](https://console.groq.com)
 
 ## Installation
 
-### 1. Install dependencies
+### Recommended: Homebrew
 
 ```bash
-brew install go portaudio
+brew tap mecejus/tap
+brew install whisprgo
 ```
 
-### 2. Clone the repo
+After installing:
+
+**1. Save your Groq API key:**
+```bash
+mkdir -p ~/.config/whisprgo
+printf '{"api_key":"YOUR_GROQ_API_KEY"}' > ~/.config/whisprgo/config.json
+chmod 600 ~/.config/whisprgo/config.json
+```
+
+**2. Start the service:**
+```bash
+brew services start whisprgo
+```
+
+**3. Grant Accessibility access** (required for the Fn-key hook):
+
+System Settings → Privacy & Security → Accessibility → click + → add `/opt/homebrew/bin/whisprgo`
+
+On Intel Macs the path is `/usr/local/bin/whisprgo`.
+
+Once granted, whisprgo is ready — no restart needed.
+
+### Alternative: install script
+
+If you'd rather not use Homebrew, clone the repo and run the script — it downloads a pre-built binary for your architecture (no Go required):
 
 ```bash
 git clone https://github.com/mecejus/whisprgo.git
 cd whisprgo
-```
-
-### 3. Run the install script
-
-```bash
 ./install.sh
 ```
 
 The script will:
-- Build the binary from source
+- Download the latest pre-built binary for your architecture
 - Install it to `/usr/local/bin/whisprgo`
 - Prompt for your Groq API key (only on first install)
 - Register a login item that starts whisprgo automatically at login
 
-### 4. Grant Accessibility access
+Then grant Accessibility access as in step 3 above.
 
-The Fn-key hook requires Accessibility permission:
-
-**System Settings → Privacy & Security → Accessibility → click + → add `/usr/local/bin/whisprgo`**
-
-Once granted, whisprgo is ready — no restart needed.
+> **Developers:** pass `--build-from-source` to compile from source instead of downloading a binary. Requires `brew install go portaudio`.
 
 ## Usage
 
@@ -81,11 +95,18 @@ tail -f ~/.config/whisprgo/whisprgo.log
 
 ## Uninstallation
 
+**Homebrew:**
+```bash
+brew services stop whisprgo
+brew uninstall whisprgo
+```
+
+**Install script:**
 ```bash
 ./uninstall.sh
 ```
 
-This stops the service, removes the login item, and deletes the binary. Your API key and logs at `~/.config/whisprgo/` are left untouched — delete that folder manually if you want a fully clean removal:
+Either way, your API key and logs at `~/.config/whisprgo/` are left untouched — delete that folder manually for a fully clean removal:
 
 ```bash
 rm -rf ~/.config/whisprgo
