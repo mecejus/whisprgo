@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,10 @@ import (
 	"whisprgo/keyboard"
 	"whisprgo/paste"
 )
+
+func playSound(path string) {
+	exec.Command("afplay", path).Start()
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -63,11 +68,13 @@ func main() {
 					isRecording.Store(false)
 					return
 				}
+				playSound("/System/Library/Sounds/Tink.aiff")
 				fmt.Print("\r\033[K● Recording...")
 			}
 		},
 		func() {
 			if isRecording.CompareAndSwap(true, false) {
+				playSound("/System/Library/Sounds/Pop.aiff")
 				wavData, err := recorder.Stop()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
