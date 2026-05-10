@@ -25,9 +25,7 @@ brew install whisprgo
 Save your Groq API key:
 
 ```bash
-mkdir -p ~/.config/whisprgo
-printf '{"api_key":"YOUR_GROQ_API_KEY"}' > ~/.config/whisprgo/config.json
-chmod 600 ~/.config/whisprgo/config.json
+whisprgo init
 ```
 
 Start the service:

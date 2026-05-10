@@ -22,7 +22,38 @@ func playSound(path string) {
 	exec.Command("afplay", path).Start()
 }
 
+func runInit() {
+	key, err := secret.Read("Paste your Groq API key: ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading key: %v\n", err)
+		os.Exit(1)
+	}
+	if key == "" {
+		fmt.Fprintln(os.Stderr, "API key cannot be empty")
+		os.Exit(1)
+	}
+	if err := config.Save(&config.Config{APIKey: key}); err != nil {
+		fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("API key saved to ~/.config/whisprgo/config.json")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  brew services start whisprgo")
+	fmt.Println()
+	fmt.Println("Then grant Accessibility access:")
+	fmt.Println("  System Settings → Privacy & Security → Accessibility → Allow whisprgo")
+	fmt.Println()
+	fmt.Println("After granting access, restart the service:")
+	fmt.Println("  brew services restart whisprgo")
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		runInit()
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
@@ -30,21 +61,8 @@ func main() {
 	}
 
 	if cfg.APIKey == "" {
-		key, err := secret.Read("Enter Groq API key: ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read key: %v\n", err)
-			os.Exit(1)
-		}
-		cfg.APIKey = key
-		if cfg.APIKey == "" {
-			fmt.Fprintln(os.Stderr, "API key cannot be empty")
-			os.Exit(1)
-		}
-		if err := config.Save(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to save config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("API key saved to ~/.config/whisprgo/config.json")
+		fmt.Fprintln(os.Stderr, "No API key configured. Run: whisprgo init")
+		os.Exit(1)
 	}
 
 	recorder, err := audio.New()

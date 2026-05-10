@@ -22,7 +22,17 @@ class Whisprgo < Formula
 
   def caveats
     <<~EOS
-      Installation instructions: https://github.com/mecejus/whisprgo
+      To complete setup, save your Groq API key (https://console.groq.com):
+        whisprgo init
+
+      Then start the service:
+        brew services start whisprgo
+
+      Finally, grant Accessibility access so whisprgo can detect the Fn key:
+        System Settings → Privacy & Security → Accessibility → Allow whisprgo
+
+      After granting access, restart the service:
+        brew services restart whisprgo
     EOS
   end
 
