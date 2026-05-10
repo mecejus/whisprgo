@@ -8,7 +8,6 @@ class Whisprgo < Formula
   sha256 "SHA256_ARM64_PLACEHOLDER"
 
   depends_on :macos
-  depends_on "portaudio"
 
   def install
     bin.install "whisprgo"

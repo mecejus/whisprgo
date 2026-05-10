@@ -10,13 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/term"
-
 	"whisprgo/audio"
 	"whisprgo/config"
 	"whisprgo/groq"
 	"whisprgo/keyboard"
 	"whisprgo/paste"
+	"whisprgo/secret"
 )
 
 func playSound(path string) {
@@ -31,14 +30,12 @@ func main() {
 	}
 
 	if cfg.APIKey == "" {
-		fmt.Print("Enter Groq API key: ")
-		keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
+		key, err := secret.Read("Enter Groq API key: ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read key: %v\n", err)
 			os.Exit(1)
 		}
-		cfg.APIKey = strings.TrimSpace(string(keyBytes))
+		cfg.APIKey = key
 		if cfg.APIKey == "" {
 			fmt.Fprintln(os.Stderr, "API key cannot be empty")
 			os.Exit(1)
