@@ -1,8 +1,14 @@
-# whisprgo
+# Whispr Go
 
-Hold **Fn** to record your voice. Release to transcribe. The text is instantly pasted wherever your cursor is.
+Hold **Fn** to record your voice. Release to transcribe. The text is instantly pasted wherever your cursor is. 
 
-Powered by [Groq](https://groq.com) + Whisper — transcription is typically done in under a second.
+A high-performance, free alternative to Whisper Flow, powered by **Whisper Large v3** via the [Groq API](https://groq.com).
+
+## Features
+
+- **Free & Fast:** Uses Groq's generous free-tier API for lightning-fast inference.
+- **Model:** Leverages OpenAI's **Whisper Large v3** for industry-leading accuracy.
+- **Native Integration:** Single binary, minimal footprint, designed for macOS.
 
 ## Requirements
 
@@ -30,9 +36,15 @@ Start the service:
 brew services start whisprgo
 ```
 
-Grant Accessibility access so the Fn-key hook works:
+Grant Accessibility access (required for Fn-key recording):
 
-**System Settings → Privacy & Security → Accessibility → click + → add `/opt/homebrew/bin/whisprgo`**
+**System Settings → Privacy & Security → Accessibility → Allow whisprgo**
+
+Then restart the service for the changes to take effect:
+
+```bash
+brew services restart whisprgo
+```
 
 ## Usage
 
@@ -40,6 +52,10 @@ Grant Accessibility access so the Fn-key hook works:
 |--------|--------|
 | Hold **Fn** | Start recording |
 | Release **Fn** | Transcribe and paste |
+
+Optionally, disable the Fn key's default action:
+
+**System Settings → Keyboard → Press globe key to → Do Nothing**
 
 ## Uninstall
 
