@@ -1,5 +1,5 @@
 class Whisprgo < Formula
-  desc "Hold Fn to record your voice — transcribed and pasted in under a second"
+  desc "Fast, accurate voice dictation service for macOS"
   homepage "https://github.com/mecejus/whisprgo"
   version "VERSION_PLACEHOLDER"
   license "MIT"
@@ -22,16 +22,7 @@ class Whisprgo < Formula
 
   def caveats
     <<~EOS
-      Before starting whisprgo, save your Groq API key:
-        mkdir -p ~/.config/whisprgo
-        printf '{"api_key":"YOUR_GROQ_API_KEY"}' > ~/.config/whisprgo/config.json
-        chmod 600 ~/.config/whisprgo/config.json
-
-      Then start the service:
-        brew services start whisprgo
-
-      Grant Accessibility access so the Fn-key hook works:
-        System Settings → Privacy & Security → Accessibility → click + → add #{opt_bin}/whisprgo
+      Installation instructions: https://github.com/mecejus/whisprgo
     EOS
   end
 
