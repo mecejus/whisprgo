@@ -38,14 +38,20 @@ func runInit() {
 	}
 	fmt.Println("API key saved to ~/.config/whisprgo/config.json")
 	fmt.Println()
-	fmt.Println("Next steps:")
+
+	if keyboard.PromptForAccess() {
+		fmt.Println("Accessibility access already granted.")
+		fmt.Println()
+		fmt.Println("Start the service:")
+		fmt.Println("  brew services start whisprgo")
+		return
+	}
+
+	fmt.Println("A system dialog should now ask for Accessibility access.")
+	fmt.Println("Click 'Open System Settings' and toggle whisprgo on.")
+	fmt.Println()
+	fmt.Println("Then start the service:")
 	fmt.Println("  brew services start whisprgo")
-	fmt.Println()
-	fmt.Println("Then grant Accessibility access:")
-	fmt.Println("  System Settings → Privacy & Security → Accessibility → Allow whisprgo")
-	fmt.Println()
-	fmt.Println("After granting access, restart the service:")
-	fmt.Println("  brew services restart whisprgo")
 }
 
 func main() {
