@@ -42,8 +42,8 @@ brew services restart whisprgo
 
 | Action | Result |
 |--------|--------|
-| Hold **Fn** | Start recording |
-| Release **Fn** | Transcribe and paste |
+| Hold **Fn** | Dictate — transcribe and paste on release |
+| Double Tap **Fn** and hold | Ask the agent — transcribe, send to LLM, speak the reply on release |
 
 Optionally, disable the Fn key's default action:
 

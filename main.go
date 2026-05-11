@@ -15,6 +15,7 @@ import (
 	"whisprgo/keyboard"
 	"whisprgo/paste"
 	"whisprgo/secret"
+	"whisprgo/tts"
 )
 
 func playSound(path string) {
@@ -86,57 +87,89 @@ func main() {
 	defer recorder.Close()
 
 	client := &groq.Client{APIKey: cfg.APIKey}
+	speaker := &tts.Client{APIKey: cfg.APIKey}
 
 	var isRecording atomic.Bool
 
-	onPress := func() {
-		if isRecording.CompareAndSwap(false, true) {
-			if err := recorder.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "\nrecorder start: %v\n", err)
-				isRecording.Store(false)
-				return
-			}
-			playSound("/System/Library/Sounds/Tink.aiff")
+	onStart := func(mode keyboard.Mode) {
+		if !isRecording.CompareAndSwap(false, true) {
+			return
+		}
+		// Interrupt any prior agent response that's still speaking so a new
+		// press is responsive.
+		speaker.Stop()
+		if err := recorder.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nrecorder start: %v\n", err)
+			isRecording.Store(false)
+			return
+		}
+		playSound("/System/Library/Sounds/Tink.aiff")
+		if mode == keyboard.ModeAgent {
+			fmt.Print("\r\033[K● Recording (agent)...")
+		} else {
 			fmt.Print("\r\033[K● Recording...")
 		}
 	}
-	onRelease := func() {
-		if isRecording.CompareAndSwap(true, false) {
-			playSound("/System/Library/Sounds/Pop.aiff")
-			wavData, err := recorder.Stop()
+
+	onEnd := func(mode keyboard.Mode) {
+		if !isRecording.CompareAndSwap(true, false) {
+			return
+		}
+		playSound("/System/Library/Sounds/Pop.aiff")
+		wavData, err := recorder.Stop()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
+			return
+		}
+		// skip recordings shorter than ~0.3 s
+		if len(wavData) < 44+16000*2/3 {
+			fmt.Print("\r\033[K(too short)\n")
+			return
+		}
+		fmt.Print("\r\033[K◌ Transcribing...")
+		text, err := client.Transcribe(wavData)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\ntranscription: %v\n", err)
+			return
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			fmt.Print("\r\033[K(no speech detected)\n")
+			return
+		}
+
+		if mode == keyboard.ModeAgent {
+			fmt.Printf("\r\033[K? %s\n", text)
+			fmt.Print("◌ Thinking...")
+			answer, err := client.Ask(text)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
+				fmt.Fprintf(os.Stderr, "\nllm: %v\n", err)
 				return
 			}
-			// skip recordings shorter than ~0.3 s
-			if len(wavData) < 44+16000*2/3 {
-				fmt.Print("\r\033[K(too short)\n")
+			answer = strings.TrimSpace(answer)
+			if answer == "" {
+				fmt.Print("\r\033[K(no response)\n")
 				return
 			}
-			fmt.Print("\r\033[K◌ Transcribing...")
-			text, err := client.Transcribe(wavData)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "\ntranscription: %v\n", err)
-				return
+			fmt.Printf("\r\033[K✓ %s\n", answer)
+			if err := speaker.Speak(answer); err != nil {
+				fmt.Fprintf(os.Stderr, "tts: %v\n", err)
 			}
-			text = strings.TrimSpace(text)
-			if text == "" {
-				fmt.Print("\r\033[K(no speech detected)\n")
-				return
-			}
-			fmt.Printf("\r\033[K✓ %s\n", text)
-			if err := paste.Paste(text); err != nil {
-				fmt.Fprintf(os.Stderr, "paste: %v\n", err)
-			}
+			return
+		}
+
+		fmt.Printf("\r\033[K✓ %s\n", text)
+		if err := paste.Paste(text); err != nil {
+			fmt.Fprintf(os.Stderr, "paste: %v\n", err)
 		}
 	}
 
-	if err := keyboard.Start(onPress, onRelease); err != nil {
+	if err := keyboard.Start(onStart, onEnd); err != nil {
 		fmt.Fprintf(os.Stderr, "keyboard hook: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("whisprgo ready — hold [fn] to record, release to transcribe. Ctrl-C to quit.")
+	fmt.Println("whisprgo ready — hold [fn] to dictate, double-press to ask. Ctrl-C to quit.")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
