@@ -1,8 +1,6 @@
 # Whispr Go
 
-Hold **Fn** to record your voice. Release to transcribe. The text is instantly pasted wherever your cursor is. 
-
-A high-performance, free alternative to Whisper Flow, powered by **Whisper Large v3** via the [Groq API](https://groq.com).
+A high-performance voice dictation service, free alternative to [Whispr Flow](https://wisprflow.ai).
 
 ## Features
 
