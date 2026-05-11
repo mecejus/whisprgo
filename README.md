@@ -1,11 +1,12 @@
 # Whispr Go
 
-A high-performance voice dictation service, free alternative to [Whispr Flow](https://wisprflow.ai).
+A high-performance voice dictation and voice agent for macOS, free alternative to [Whispr Flow](https://wisprflow.ai).
 
 ## Features
 
-- **Free & Fast:** Uses Groq's generous free-tier API for lightning-fast inference.
-- **Model:** Leverages OpenAI's **Whisper Large v3** for industry-leading accuracy.
+- **Voice Dictation:** Hold Fn, speak, release — text is pasted instantly.
+- **Voice Agent:** Double-tap Fn and hold, ask anything aloud — the answer is spoken back.
+- **Free & Fast:** Powered entirely by Groq's free-tier API for near-instant responses.
 - **Native Integration:** Single binary, minimal footprint, designed for macOS.
 
 ## Requirements
@@ -43,7 +44,7 @@ brew services restart whisprgo
 | Action | Result |
 |--------|--------|
 | Hold **Fn** | Dictate — transcribe and paste on release |
-| Double Tap **Fn** and hold | Ask the agent — transcribe, send to LLM, speak the reply on release |
+| Double Tap **Fn** and hold | Ask the agent — the answer is spoken back on release |
 
 Optionally, disable the Fn key's default action:
 
