@@ -65,16 +65,25 @@ func main() {
 
 	// Accessibility access is latched per process: granting it to a running
 	// process doesn't take effect until the process restarts. So we prompt
-	// once, poll silently until granted, then exit and let launchd respawn
-	// us with a fresh process that picks up the new permission.
+	// once, poll silently until granted, then re-exec ourselves in place.
+	// syscall.Exec replaces the process image (same PID, fresh state) which
+	// is more reliable than exiting and depending on launchd to respawn us.
 	if !keyboard.HasAccess() {
 		fmt.Fprintln(os.Stderr, "Requesting Accessibility access — see the system dialog.")
 		keyboard.PromptForAccess()
 		for !keyboard.HasAccess() {
 			time.Sleep(2 * time.Second)
 		}
-		fmt.Fprintln(os.Stderr, "Access granted. Restarting to apply.")
-		os.Exit(0)
+		fmt.Fprintln(os.Stderr, "Access granted. Reloading.")
+		exe, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "locate executable: %v\n", err)
+			os.Exit(1)
+		}
+		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+			fmt.Fprintf(os.Stderr, "reload: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	recorder, err := audio.New()
