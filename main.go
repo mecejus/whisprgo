@@ -38,20 +38,12 @@ func runInit() {
 	}
 	fmt.Println("API key saved to ~/.config/whisprgo/config.json")
 	fmt.Println()
-
-	if keyboard.PromptForAccess() {
-		fmt.Println("Accessibility access already granted.")
-		fmt.Println()
-		fmt.Println("Start the service:")
-		fmt.Println("  brew services start whisprgo")
-		return
-	}
-
-	fmt.Println("A system dialog should now ask for Accessibility access.")
-	fmt.Println("Click 'Open System Settings' and toggle whisprgo on.")
-	fmt.Println()
-	fmt.Println("Then start the service:")
+	fmt.Println("Start the service:")
 	fmt.Println("  brew services start whisprgo")
+	fmt.Println()
+	fmt.Println("On first start, a system dialog will ask for Accessibility access.")
+	fmt.Println("Click 'Open System Settings' and toggle whisprgo on — the service")
+	fmt.Println("will pick up the change automatically.")
 }
 
 func main() {
@@ -69,6 +61,20 @@ func main() {
 	if cfg.APIKey == "" {
 		fmt.Fprintln(os.Stderr, "No API key configured. Run: whisprgo init")
 		os.Exit(1)
+	}
+
+	// Accessibility access is latched per process: granting it to a running
+	// process doesn't take effect until the process restarts. So we prompt
+	// once, poll silently until granted, then exit and let launchd respawn
+	// us with a fresh process that picks up the new permission.
+	if !keyboard.HasAccess() {
+		fmt.Fprintln(os.Stderr, "Requesting Accessibility access — see the system dialog.")
+		keyboard.PromptForAccess()
+		for !keyboard.HasAccess() {
+			time.Sleep(2 * time.Second)
+		}
+		fmt.Fprintln(os.Stderr, "Access granted. Restarting to apply.")
+		os.Exit(0)
 	}
 
 	recorder, err := audio.New()
@@ -124,14 +130,9 @@ func main() {
 		}
 	}
 
-	for {
-		if err := keyboard.Start(onPress, onRelease); err == nil {
-			break
-		}
-		fmt.Fprintf(os.Stderr, "keyboard hook: accessibility access required\n")
-		fmt.Fprintf(os.Stderr, "Grant access in: System Settings → Privacy & Security → Accessibility → add whisprgo\n")
-		fmt.Fprintf(os.Stderr, "Retrying in 30s...\n")
-		time.Sleep(30 * time.Second)
+	if err := keyboard.Start(onPress, onRelease); err != nil {
+		fmt.Fprintf(os.Stderr, "keyboard hook: %v\n", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("whisprgo ready — hold [fn] to record, release to transcribe. Ctrl-C to quit.")

@@ -25,9 +25,11 @@ class Whisprgo < Formula
       To complete setup, save your Groq API key (https://console.groq.com):
         whisprgo init
 
-      A system dialog will pop up to grant Accessibility access — toggle
-      whisprgo on. Then start the service:
+      Then start the service:
         brew services start whisprgo
+
+      On first start, a system dialog will ask for Accessibility access —
+      toggle whisprgo on and the service picks it up automatically.
     EOS
   end
 

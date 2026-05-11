@@ -34,6 +34,10 @@ static CGEventRef tapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRe
     return event;
 }
 
+static int hasAccess() {
+    return AXIsProcessTrusted() ? 1 : 0;
+}
+
 static int promptForAccess() {
     CFStringRef keys[]   = { kAXTrustedCheckOptionPrompt };
     CFBooleanRef values[] = { kCFBooleanTrue };
@@ -95,6 +99,12 @@ func goFnState(pressed C.int) {
 	}
 }
 
+// HasAccess returns true if Accessibility access has been granted.
+// It does not trigger a permission prompt.
+func HasAccess() bool {
+	return C.hasAccess() != 0
+}
+
 // PromptForAccess triggers the macOS Accessibility permission dialog if access
 // has not been granted yet. The dialog deeplinks the user to the correct
 // System Settings pane. Returns true if access is already granted.
@@ -105,7 +115,7 @@ func PromptForAccess() bool {
 // Start registers fn-key press/release callbacks and begins listening.
 // Returns an error if Accessibility access has not been granted.
 func Start(press, release func()) error {
-	if C.promptForAccess() == 0 {
+	if C.hasAccess() == 0 {
 		return fmt.Errorf("accessibility access required")
 	}
 
