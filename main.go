@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"whisprgo/audio"
 	"whisprgo/config"
@@ -41,9 +40,9 @@ func runInit() {
 	fmt.Println("Start the service:")
 	fmt.Println("  brew services start whisprgo")
 	fmt.Println()
-	fmt.Println("On first start, a system dialog will ask for Accessibility access.")
-	fmt.Println("Click 'Open System Settings' and toggle whisprgo on — the service")
-	fmt.Println("will pick up the change automatically.")
+	fmt.Println("A system dialog will ask for Accessibility access. Grant it,")
+	fmt.Println("then restart the service to apply:")
+	fmt.Println("  brew services restart whisprgo")
 }
 
 func main() {
@@ -63,27 +62,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Accessibility access is latched per process: granting it to a running
-	// process doesn't take effect until the process restarts. So we prompt
-	// once, poll silently until granted, then re-exec ourselves in place.
-	// syscall.Exec replaces the process image (same PID, fresh state) which
-	// is more reliable than exiting and depending on launchd to respawn us.
+	// macOS caches Accessibility denials per process: granting access mid-run
+	// doesn't take effect, and exiting risks a launchd respawn loop that
+	// re-fires the dialog. Trigger the prompt once, print the restart
+	// instruction, and block on signals — `brew services restart whisprgo`
+	// will kill us and the fresh process will see the grant.
 	if !keyboard.HasAccess() {
-		fmt.Fprintln(os.Stderr, "Requesting Accessibility access — see the system dialog.")
 		keyboard.PromptForAccess()
-		for !keyboard.HasAccess() {
-			time.Sleep(2 * time.Second)
-		}
-		fmt.Fprintln(os.Stderr, "Access granted. Reloading.")
-		exe, err := os.Executable()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "locate executable: %v\n", err)
-			os.Exit(1)
-		}
-		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-			fmt.Fprintf(os.Stderr, "reload: %v\n", err)
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "Accessibility access required.")
+		fmt.Fprintln(os.Stderr, "Grant it in the system dialog, then run:")
+		fmt.Fprintln(os.Stderr, "  brew services restart whisprgo")
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		return
 	}
 
 	recorder, err := audio.New()

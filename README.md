@@ -34,7 +34,11 @@ Start the service:
 brew services start whisprgo
 ```
 
-On first start, a system dialog will pop up asking for Accessibility access (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on — the service picks up the change automatically.
+A system dialog will pop up asking for Accessibility access (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
+
+```bash
+brew services restart whisprgo
+```
 
 ## Usage
 
