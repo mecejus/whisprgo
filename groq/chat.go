@@ -10,7 +10,7 @@ import (
 
 const chatURL = "https://api.groq.com/openai/v1/chat/completions"
 
-const systemPrompt = "You are an assistant that gives very brief answers to the questions with minimal amount of words. Express all information using only plain words and standard punctuation, completely avoiding technical symbols, abbreviations, or special characters. Omit all citation markers, source references, and bracketed line pointers from your responses."
+const systemPrompt = "You are an assistant that gives very brief answers to the questions with minimal amount of words with no introductory or concluding remarks. Omit all citation markers, source references, and bracketed line pointers from your responses."
 
 type chatMessage struct {
 	Role    string `json:"role"`
