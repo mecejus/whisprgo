@@ -21,7 +21,7 @@ func Info(message string) {
 // Prompt shows a text-entry dialog and returns the user's input. The second
 // return is false if the user cancelled or osascript failed.
 func Prompt(message string) (string, bool) {
-	const script = `set r to display dialog (system attribute "WHISPRGO_MSG") with title (system attribute "WHISPRGO_TITLE") default answer ""
+	const script = `set r to display dialog (system attribute "WHISPRGO_MSG") with title (system attribute "WHISPRGO_TITLE") default answer "" with hidden answer
 return text returned of r`
 	cmd := exec.Command("osascript", "-e", script)
 	cmd.Env = append(os.Environ(),
