@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,7 +15,6 @@ import (
 	"whisprgo/groq"
 	"whisprgo/keyboard"
 	"whisprgo/paste"
-	"whisprgo/tts"
 )
 
 func playSound(path string) {
@@ -66,7 +64,6 @@ func main() {
 	defer recorder.Close()
 
 	client := &groq.Client{APIKey: cfg.APIKey}
-	speaker := &tts.Client{APIKey: cfg.APIKey}
 
 	var isRecording atomic.Bool
 
@@ -74,9 +71,6 @@ func main() {
 		if !isRecording.CompareAndSwap(false, true) {
 			return
 		}
-		// Interrupt any prior agent response that's still speaking so a new
-		// press is responsive.
-		speaker.Stop()
 		if err := recorder.Start(); err != nil {
 			isRecording.Store(false)
 			dialog.Error(fmt.Sprintf("Recorder start error: %v", err))
@@ -131,13 +125,7 @@ func main() {
 				return
 			}
 			fmt.Printf("\r\033[K✓ %s\n", answer)
-			if err := speaker.Speak(answer); err != nil {
-				if errors.Is(err, tts.ErrRateLimit) {
-					dialog.Info(answer)
-				} else {
-					dialog.Error(fmt.Sprintf("TTS error: %v", err))
-				}
-			}
+			dialog.Info(answer)
 			return
 		}
 

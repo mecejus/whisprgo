@@ -5,7 +5,7 @@ A high-performance voice dictation and voice agent for macOS, free alternative t
 ## Features
 
 - **Voice Dictation:** Hold Fn, speak, release — text is pasted instantly.
-- **Voice Agent:** Double-tap Fn and hold, ask anything aloud — the answer is spoken back.
+- **Voice Agent:** Double-tap Fn and hold, ask anything aloud — the answer pops up in a dialog.
 - **Free & Fast:** Powered entirely by Groq's free-tier API for near-instant responses.
 - **Native Integration:** Single binary, minimal footprint, designed for macOS.
 
@@ -38,7 +38,7 @@ brew services restart whisprgo
 | Action | Result |
 |--------|--------|
 | Hold **Fn** | Dictate — transcribe and paste on release |
-| Double Tap **Fn** and hold | Ask the agent — the answer is spoken back on release |
+| Double Tap **Fn** and hold | Ask the agent — the answer appears in a dialog on release |
 
 Optionally, disable the Fn key's default action:
 
