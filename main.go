@@ -103,7 +103,7 @@ func main() {
 			isRecording.Store(false)
 			return
 		}
-		playSound("/System/Library/Sounds/Tink.aiff")
+		playSound("/System/Library/Sounds/Blow.aiff")
 		if mode == keyboard.ModeAgent {
 			fmt.Print("\r\033[K● Recording (agent)...")
 		} else {
@@ -115,7 +115,7 @@ func main() {
 		if !isRecording.CompareAndSwap(true, false) {
 			return
 		}
-		playSound("/System/Library/Sounds/Pop.aiff")
+		playSound("/System/Library/Sounds/Bottle.aiff")
 		wavData, err := recorder.Stop()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
