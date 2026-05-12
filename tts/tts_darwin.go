@@ -15,6 +15,10 @@ import (
 
 const speechURL = "https://api.groq.com/openai/v1/audio/speech"
 
+// ErrRateLimit is returned by Speak when the synthesis endpoint responds with
+// HTTP 429. Callers can use it to fall back to a non-audio presentation.
+var ErrRateLimit = errors.New("tts rate limit")
+
 type Client struct {
 	APIKey string
 
@@ -73,6 +77,9 @@ func (c *Client) Speak(text string) error {
 			return nil
 		}
 		return fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ErrRateLimit
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("API %d: %s", resp.StatusCode, string(wavData))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,10 +12,10 @@ import (
 
 	"whisprgo/audio"
 	"whisprgo/config"
+	"whisprgo/dialog"
 	"whisprgo/groq"
 	"whisprgo/keyboard"
 	"whisprgo/paste"
-	"whisprgo/secret"
 	"whisprgo/tts"
 )
 
@@ -22,57 +23,36 @@ func playSound(path string) {
 	exec.Command("afplay", path).Start()
 }
 
-func runInit() {
-	key, err := secret.Read("Paste your Groq API key: ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading key: %v\n", err)
-		os.Exit(1)
-	}
-	if key == "" {
-		fmt.Fprintln(os.Stderr, "API key cannot be empty")
-		os.Exit(1)
-	}
-	if err := config.Save(&config.Config{APIKey: key}); err != nil {
-		fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("API key saved to ~/.config/whisprgo/config.json")
-	fmt.Println()
-	fmt.Println("Start the service:")
-	fmt.Println("  brew services start whisprgo")
-	fmt.Println()
-	fmt.Println("A system dialog will ask for Accessibility access. Grant it,")
-	fmt.Println("then restart the service to apply:")
-	fmt.Println("  brew services restart whisprgo")
+func fatal(message string) {
+	dialog.Error(message)
+	os.Exit(1)
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "init" {
-		runInit()
-		return
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
-		os.Exit(1)
+		fatal(fmt.Sprintf("Error loading config: %v", err))
 	}
 
 	if cfg.APIKey == "" {
-		fmt.Fprintln(os.Stderr, "No API key configured. Run: whisprgo init")
-		os.Exit(1)
+		key, ok := dialog.Prompt("Enter your Groq API key (get one at https://console.groq.com):")
+		if !ok || strings.TrimSpace(key) == "" {
+			fatal("A Groq API key is required to use whisprgo.")
+		}
+		cfg.APIKey = strings.TrimSpace(key)
+		if err := config.Save(cfg); err != nil {
+			fatal(fmt.Sprintf("Error saving config: %v", err))
+		}
 	}
 
 	// macOS caches Accessibility denials per process: granting access mid-run
 	// doesn't take effect, and exiting risks a launchd respawn loop that
-	// re-fires the dialog. Trigger the prompt once, print the restart
+	// re-fires the dialog. Trigger the prompt once, show the restart
 	// instruction, and block on signals — `brew services restart whisprgo`
 	// will kill us and the fresh process will see the grant.
 	if !keyboard.HasAccess() {
 		keyboard.PromptForAccess()
-		fmt.Fprintln(os.Stderr, "Accessibility access required.")
-		fmt.Fprintln(os.Stderr, "Grant it in the system dialog, then run:")
-		fmt.Fprintln(os.Stderr, "  brew services restart whisprgo")
+		dialog.Error("Accessibility access is required. Grant it in the system dialog, then run:\n\nbrew services restart whisprgo")
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
@@ -81,8 +61,7 @@ func main() {
 
 	recorder, err := audio.New()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "audio init error: %v\n", err)
-		os.Exit(1)
+		fatal(fmt.Sprintf("Audio init error: %v", err))
 	}
 	defer recorder.Close()
 
@@ -99,8 +78,8 @@ func main() {
 		// press is responsive.
 		speaker.Stop()
 		if err := recorder.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "\nrecorder start: %v\n", err)
 			isRecording.Store(false)
+			dialog.Error(fmt.Sprintf("Recorder start error: %v", err))
 			return
 		}
 		playSound("/System/Library/Sounds/Blow.aiff")
@@ -118,7 +97,7 @@ func main() {
 		playSound("/System/Library/Sounds/Bottle.aiff")
 		wavData, err := recorder.Stop()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nrecorder stop: %v\n", err)
+			dialog.Error(fmt.Sprintf("Recorder stop error: %v", err))
 			return
 		}
 		// skip recordings shorter than ~0.3 s
@@ -129,7 +108,7 @@ func main() {
 		fmt.Print("\r\033[K◌ Transcribing...")
 		text, err := client.Transcribe(wavData)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\ntranscription: %v\n", err)
+			dialog.Error(fmt.Sprintf("Transcription error: %v", err))
 			return
 		}
 		text = strings.TrimSpace(text)
@@ -143,7 +122,7 @@ func main() {
 			fmt.Print("◌ Thinking...")
 			answer, err := client.Ask(text)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nllm: %v\n", err)
+				dialog.Error(fmt.Sprintf("LLM error: %v", err))
 				return
 			}
 			answer = strings.TrimSpace(answer)
@@ -153,20 +132,23 @@ func main() {
 			}
 			fmt.Printf("\r\033[K✓ %s\n", answer)
 			if err := speaker.Speak(answer); err != nil {
-				fmt.Fprintf(os.Stderr, "tts: %v\n", err)
+				if errors.Is(err, tts.ErrRateLimit) {
+					dialog.Info(answer)
+				} else {
+					dialog.Error(fmt.Sprintf("TTS error: %v", err))
+				}
 			}
 			return
 		}
 
 		fmt.Printf("\r\033[K✓ %s\n", text)
 		if err := paste.Paste(text); err != nil {
-			fmt.Fprintf(os.Stderr, "paste: %v\n", err)
+			dialog.Error(fmt.Sprintf("Paste error: %v", err))
 		}
 	}
 
 	if err := keyboard.Start(onStart, onEnd); err != nil {
-		fmt.Fprintf(os.Stderr, "keyboard hook: %v\n", err)
-		os.Exit(1)
+		fatal(fmt.Sprintf("Keyboard hook error: %v", err))
 	}
 
 	fmt.Println("whisprgo ready — hold [fn] to dictate, double-press to ask. Ctrl-C to quit.")

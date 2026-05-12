@@ -22,14 +22,12 @@ class Whisprgo < Formula
 
   def caveats
     <<~EOS
-      To complete setup, save your Groq API key (https://console.groq.com):
-        whisprgo init
-
       Start the service:
         brew services start whisprgo
 
-      A system dialog will ask for Accessibility access. Grant it, then
-      restart the service to apply:
+      On first launch a dialog will prompt for your Groq API key
+      (https://console.groq.com), then a system dialog will ask for
+      Accessibility access. Grant it, then restart the service to apply:
         brew services restart whisprgo
     EOS
   end

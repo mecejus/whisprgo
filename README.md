@@ -21,19 +21,13 @@ brew tap mecejus/tap
 brew install whisprgo
 ```
 
-Save your Groq API key:
-
-```bash
-whisprgo init
-```
-
 Start the service:
 
 ```bash
 brew services start whisprgo
 ```
 
-A system dialog will pop up asking for Accessibility access (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
+On first launch a dialog will prompt for your Groq API key. After saving it, a system dialog will pop up asking for Accessibility access (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
 
 ```bash
 brew services restart whisprgo
