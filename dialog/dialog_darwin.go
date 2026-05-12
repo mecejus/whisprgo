@@ -11,8 +11,21 @@ const appTitle = "whisprgo"
 // Error displays a blocking error dialog with the given message.
 func Error(message string) { show(message) }
 
-// Info displays a blocking informational dialog with the given message.
-func Info(message string) { show(message) }
+// Info displays a blocking informational dialog with Copy and OK buttons.
+// Clicking Copy places the message text on the clipboard.
+func Info(message string) {
+	path, ok := writeTempMsg(message)
+	if !ok {
+		return
+	}
+	defer os.Remove(path)
+
+	script := `set msg to read POSIX file "` + path + `" as «class utf8»
+set r to display dialog msg with title "` + appTitle + `" buttons {"Copy", "OK"} default button "OK"
+if button returned of r is "Copy" then set the clipboard to msg`
+
+	_ = exec.Command("osascript", "-e", script).Run()
+}
 
 // Prompt shows a text-entry dialog and returns the user's input. The second
 // return is false if the user cancelled or osascript failed.
