@@ -6,26 +6,19 @@ package paste
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
 
-// Post a single keyboard event carrying a chunk of UTF-16 code units as the
-// event's Unicode string. The keycode is ignored when a Unicode string is set;
-// the system delivers the characters to the focused text field directly.
-static void postUnicodeChunk(const UniChar *buf, int len) {
-    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
-    CGEventRef up   = CGEventCreateKeyboardEvent(NULL, 0, false);
-    CGEventKeyboardSetUnicodeString(down, len, buf);
-    CGEventKeyboardSetUnicodeString(up,   len, buf);
-    CGEventPost(kCGHIDEventTap, down);
-    CGEventPost(kCGHIDEventTap, up);
-    CFRelease(down);
-    CFRelease(up);
-}
-
-// Post Cmd+C to copy the current selection in the focused app. Uses the ANSI
-// virtual keycode for 'C' (8) with the kCGEventFlagMaskCommand modifier.
-static void postCmdC() {
+// Post a Cmd+<keycode> keystroke (down then up). Used to drive both Cmd+C
+// (capture selection) and Cmd+V (paste). Returns 0 if the events could not
+// be created, 1 otherwise.
+static int postCmdKeystroke(int keycode) {
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-    CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, true);
-    CGEventRef up   = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, false);
+    CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)keycode, true);
+    CGEventRef up   = CGEventCreateKeyboardEvent(src, (CGKeyCode)keycode, false);
+    if (!down || !up) {
+        if (down) CFRelease(down);
+        if (up)   CFRelease(up);
+        if (src)  CFRelease(src);
+        return 0;
+    }
     CGEventSetFlags(down, kCGEventFlagMaskCommand);
     CGEventSetFlags(up,   kCGEventFlagMaskCommand);
     CGEventPost(kCGHIDEventTap, down);
@@ -33,42 +26,48 @@ static void postCmdC() {
     CFRelease(down);
     CFRelease(up);
     if (src) CFRelease(src);
+    return 1;
 }
 */
 import "C"
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
-	"unicode/utf16"
-	"unsafe"
 )
 
-// chunkSize caps how many UTF-16 code units we attach to a single event.
-// CGEventKeyboardSetUnicodeString silently truncates very long strings
-// (limit is somewhere around ~20 units depending on macOS version), so we
-// stay well under that.
-const chunkSize = 16
+// ANSI virtual keycodes for the keystrokes we synthesise.
+const (
+	keyCodeC = 8
+	keyCodeV = 9
+)
 
-// Paste types text directly into the focused text field via CGEventPost,
-// without touching the clipboard. Requires Accessibility access (the same
-// permission already needed for the Fn-key hook).
+// Paste writes text to the system pasteboard and issues Cmd+V to paste it
+// into the focused field. On success the pasted text is left on the
+// pasteboard. If the Cmd+V keystroke cannot be synthesised, the prior
+// pasteboard contents are restored so the clipboard is never left in a
+// half-written state. Requires Accessibility access.
 func Paste(text string) error {
 	if text == "" {
 		return nil
 	}
-	units := utf16.Encode([]rune(text))
-	for i := 0; i < len(units); i += chunkSize {
-		end := i + chunkSize
-		if end > len(units) {
-			end = len(units)
-		}
-		chunk := units[i:end]
-		C.postUnicodeChunk(
-			(*C.UniChar)(unsafe.Pointer(&chunk[0])),
-			C.int(len(chunk)),
-		)
+
+	original, hadOriginal := readPasteboard()
+
+	if err := writePasteboard(text); err != nil {
+		return err
 	}
+
+	if C.postCmdKeystroke(C.int(keyCodeV)) == 0 {
+		if hadOriginal {
+			_ = writePasteboard(original)
+		} else {
+			_ = writePasteboard("")
+		}
+		return fmt.Errorf("could not post Cmd+V keystroke")
+	}
+
 	return nil
 }
 
@@ -99,7 +98,7 @@ func CaptureSelection() (text string, ok bool) {
 		return "", false
 	}
 
-	C.postCmdC()
+	C.postCmdKeystroke(C.int(keyCodeC))
 
 	// Cmd+C is asynchronous: the system delivers it to the focused app, which
 	// then writes to the pasteboard on its own schedule. Poll briefly for a
