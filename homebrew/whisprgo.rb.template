@@ -1,5 +1,5 @@
 class Whisprgo < Formula
-  desc "Fast, accurate voice dictation service for macOS"
+  desc "A high performance macOS voice dictation and voice agent service"
   homepage "https://github.com/mecejus/whisprgo"
   version "VERSION_PLACEHOLDER"
   license "MIT"
