@@ -19,9 +19,27 @@ static void postUnicodeChunk(const UniChar *buf, int len) {
     CFRelease(down);
     CFRelease(up);
 }
+
+// Post Cmd+C to copy the current selection in the focused app. Uses the ANSI
+// virtual keycode for 'C' (8) with the kCGEventFlagMaskCommand modifier.
+static void postCmdC() {
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, true);
+    CGEventRef up   = CGEventCreateKeyboardEvent(src, (CGKeyCode)8, false);
+    CGEventSetFlags(down, kCGEventFlagMaskCommand);
+    CGEventSetFlags(up,   kCGEventFlagMaskCommand);
+    CGEventPost(kCGHIDEventTap, down);
+    CGEventPost(kCGHIDEventTap, up);
+    CFRelease(down);
+    CFRelease(up);
+    if (src) CFRelease(src);
+}
 */
 import "C"
 import (
+	"os/exec"
+	"strings"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -52,4 +70,65 @@ func Paste(text string) error {
 		)
 	}
 	return nil
+}
+
+// selectionSentinel is written to the pasteboard before issuing Cmd+C so we
+// can tell whether the keystroke actually copied anything. If the pasteboard
+// still holds this exact value when we poll, the focused app had no selection
+// (or doesn't respond to Cmd+C). The value is deliberately odd to avoid
+// matching real clipboard content.
+const selectionSentinel = "\x00whisprgo-no-selection\x00"
+
+// CaptureSelection copies the focused app's current text selection via Cmd+C
+// and returns it. The pasteboard is restored to its prior contents before
+// returning. ok is false if no selection was captured (the pasteboard never
+// changed from the sentinel value we wrote).
+//
+// Requires Accessibility access — same as Paste.
+func CaptureSelection() (text string, ok bool) {
+	original, hadOriginal := readPasteboard()
+	defer func() {
+		if hadOriginal {
+			_ = writePasteboard(original)
+		} else {
+			_ = writePasteboard("")
+		}
+	}()
+
+	if err := writePasteboard(selectionSentinel); err != nil {
+		return "", false
+	}
+
+	C.postCmdC()
+
+	// Cmd+C is asynchronous: the system delivers it to the focused app, which
+	// then writes to the pasteboard on its own schedule. Poll briefly for a
+	// change away from the sentinel.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(15 * time.Millisecond)
+		current, _ := readPasteboard()
+		if current != selectionSentinel {
+			trimmed := strings.TrimSpace(current)
+			if trimmed == "" {
+				return "", false
+			}
+			return current, true
+		}
+	}
+	return "", false
+}
+
+func readPasteboard() (string, bool) {
+	out, err := exec.Command("pbpaste").Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+func writePasteboard(s string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
 }

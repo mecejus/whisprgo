@@ -51,7 +51,7 @@ func (c *Client) Ask(prompt string) (string, error) {
 		},
 		Model:               "openai/gpt-oss-120b",
 		Temperature:         1,
-		MaxCompletionTokens: 300,
+		MaxCompletionTokens: 500,
 		TopP:                1,
 		Stream:              false,
 		ReasoningEffort:     "low",

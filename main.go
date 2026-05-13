@@ -45,12 +45,14 @@ func main() {
 
 	// macOS caches Accessibility denials per process: granting access mid-run
 	// doesn't take effect, and exiting risks a launchd respawn loop that
-	// re-fires the dialog. Trigger the prompt once, show the restart
-	// instruction, and block on signals — `brew services restart whisprgo`
-	// will kill us and the fresh process will see the grant.
+	// re-fires the dialog. Trigger the system prompt once and block on
+	// signals — `brew services restart whisprgo` will kill us and the fresh
+	// process will see the grant. We deliberately do NOT raise our own dialog
+	// here: doing so steals focus from the System Settings window the prompt
+	// deeplinks to, which confuses users.
 	if !keyboard.HasAccess() {
 		keyboard.PromptForAccess()
-		dialog.Error("Accessibility access is required. Grant it in the system dialog, then run:\n\nbrew services restart whisprgo")
+		fmt.Fprintln(os.Stderr, "Accessibility access is required. Grant it in System Settings, then run: brew services restart whisprgo")
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
@@ -67,6 +69,14 @@ func main() {
 
 	var isRecording atomic.Bool
 
+	// Agent-mode context, populated by onStart and consumed by onEnd. Safe to
+	// access without a mutex because the keyboard hook serialises onStart /
+	// onEnd pairs and isRecording guards re-entry.
+	var (
+		agentSelection     string
+		agentSelectionDone chan struct{}
+	)
+
 	onStart := func(mode keyboard.Mode) {
 		if !isRecording.CompareAndSwap(false, true) {
 			return
@@ -78,6 +88,16 @@ func main() {
 		}
 		playSound("/System/Library/Sounds/Blow.aiff")
 		if mode == keyboard.ModeAgent {
+			// Capture the focused app's selection (if any) off the event-tap
+			// thread so we don't stall keyboard delivery while pbpaste polls.
+			agentSelection = ""
+			agentSelectionDone = make(chan struct{})
+			go func(done chan struct{}) {
+				defer close(done)
+				if sel, ok := paste.CaptureSelection(); ok {
+					agentSelection = sel
+				}
+			}(agentSelectionDone)
 			fmt.Print("\r\033[K● Recording (agent)...")
 		} else {
 			fmt.Print("\r\033[K● Recording...")
@@ -112,9 +132,22 @@ func main() {
 		}
 
 		if mode == keyboard.ModeAgent {
-			fmt.Printf("\r\033[K? %s\n", text)
+			if agentSelectionDone != nil {
+				<-agentSelectionDone
+				agentSelectionDone = nil
+			}
+			selection := agentSelection
+			agentSelection = ""
+
+			prompt := text
+			if selection != "" {
+				prompt = "Selected text:\n" + selection + "\n\nInstruction: " + text
+				fmt.Printf("\r\033[K? [selection] %s\n", text)
+			} else {
+				fmt.Printf("\r\033[K? %s\n", text)
+			}
 			fmt.Print("◌ Thinking...")
-			answer, err := client.Ask(text)
+			answer, err := client.Ask(prompt)
 			if err != nil {
 				dialog.Error(fmt.Sprintf("LLM error: %v", err))
 				return
@@ -125,7 +158,9 @@ func main() {
 				return
 			}
 			fmt.Printf("\r\033[K✓ %s\n", answer)
-			dialog.Info(answer)
+			if err := paste.Paste(answer); err != nil {
+				dialog.Error(fmt.Sprintf("Paste error: %v", err))
+			}
 			return
 		}
 

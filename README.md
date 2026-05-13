@@ -5,7 +5,7 @@ A high-performance voice dictation and agent for macOS, free alternative to [Whi
 ## Features
 
 - **Voice Dictation:** Hold Fn, speak, release, text is pasted instantly.
-- **Voice Agent:** Double-tap Fn and hold, ask anything aloud, the answer pops up in a dialog.
+- **Voice Agent:** Double-tap Fn and hold, ask anything aloud, the answer is typed straight into the focused field.
 - **Free & Fast:** Powered entirely by Groq's free-tier API for near-instant responses.
 - **Native Integration:** Single binary, minimal footprint, designed for macOS.
 
@@ -27,7 +27,7 @@ Start the service:
 brew services start whisprgo
 ```
 
-On first launch a dialog will prompt for your Groq API key. After saving it, a system dialog will pop up asking for Accessibility access (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
+On first launch a dialog will prompt for your Groq API key. After saving it, the macOS Accessibility permission prompt will appear (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
 
 ```bash
 brew services restart whisprgo
@@ -38,7 +38,7 @@ brew services restart whisprgo
 | Action | Result |
 |--------|--------|
 | Hold **Fn** | Dictate, transcribe and paste on release |
-| Double Tap **Fn** and hold | Ask the agent, the answer appears in a dialog on release |
+| Double Tap **Fn** and hold | Ask the agent, the answer is typed into the focused field on release |
 
 Optionally, disable the Fn key's default action: **System Settings → Keyboard → Press globe key to → Do Nothing**
 
