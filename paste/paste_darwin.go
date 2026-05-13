@@ -32,10 +32,19 @@ static int postCmdKeystroke(int keycode) {
 import "C"
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// utf8Env forces pbcopy/pbpaste to interpret their stdin/stdout as UTF-8.
+// pbcopy's default encoding is taken from LANG → LC_CTYPE →
+// __CF_USER_TEXT_ENCODING (see pbcopy(1)); under launchd none of these are
+// set, so it falls back to Mac Roman and mangles non-ASCII bytes from
+// transcripts and LLM responses. Setting LANG explicitly makes the encoding
+// deterministic regardless of how the process was started.
+var utf8Env = append(os.Environ(), "LANG=en_US.UTF-8", "LC_CTYPE=UTF-8")
 
 // ANSI virtual keycodes for the keystrokes we synthesise.
 const (
@@ -119,7 +128,9 @@ func CaptureSelection() (text string, ok bool) {
 }
 
 func readPasteboard() (string, bool) {
-	out, err := exec.Command("pbpaste").Output()
+	cmd := exec.Command("pbpaste")
+	cmd.Env = utf8Env
+	out, err := cmd.Output()
 	if err != nil {
 		return "", false
 	}
@@ -128,6 +139,7 @@ func readPasteboard() (string, bool) {
 
 func writePasteboard(s string) error {
 	cmd := exec.Command("pbcopy")
+	cmd.Env = utf8Env
 	cmd.Stdin = strings.NewReader(s)
 	return cmd.Run()
 }
