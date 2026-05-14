@@ -49,35 +49,11 @@ jobs:
           name: dist
           path: dist
 
-      - name: Compute variables
-        run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          echo "SHA256_ARM64=$(cat dist/whisprgo-darwin-arm64.sha256)" >> "$GITHUB_ENV"
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --generate-notes \
-            dist/whisprgo-darwin-arm64.tar.gz
-
-      - name: Update Homebrew tap
-        env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-        run: |
-          git clone https://x-access-token:${TAP_TOKEN}@github.com/mecejus/homebrew-tap.git
-
-          mkdir -p homebrew-tap/Formula
-          sed \
-            -e "s/VERSION_PLACEHOLDER/$VERSION/g" \
-            -e "s/SHA256_ARM64_PLACEHOLDER/$SHA256_ARM64/g" \
-            homebrew/whisprgo.rb.template \
-            > homebrew-tap/Formula/whisprgo.rb
-
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/whisprgo.rb
-          git diff --cached --quiet || git commit -m "whisprgo $VERSION"
-          git push
+            dist/whisprgo-darwin-arm64.tar.gz \
+            dist/whisprgo-darwin-arm64.sha256

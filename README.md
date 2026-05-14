@@ -17,20 +17,13 @@ A high performance macOS voice dictation and voice agent service, free alternati
 ## Install
 
 ```bash
-brew tap mecejus/tap
-brew install whisprgo
+curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/install.sh | sh
 ```
 
-Start the service:
+On first launch a dialog will prompt for your Groq API key. After saving it, the macOS Accessibility permission prompt will appear (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service:
 
 ```bash
-brew services start whisprgo
-```
-
-On first launch a dialog will prompt for your Groq API key. After saving it, the macOS Accessibility permission prompt will appear (required for Fn-key recording). Click **Open System Settings** and toggle whisprgo on, then restart the service to apply:
-
-```bash
-brew services restart whisprgo
+launchctl kickstart -k "gui/$(id -u)/com.whisprgo"
 ```
 
 ## Usage
@@ -45,12 +38,11 @@ Optionally, disable the Fn key's default action: **System Settings → Keyboard 
 ## Uninstall
 
 ```bash
-brew services stop whisprgo
-brew uninstall whisprgo
+curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/uninstall.sh | sh
 ```
 
 ## Logs
 
 ```bash
-tail -f $(brew --prefix)/var/log/whisprgo.log
+tail -f ~/Library/Logs/whisprgo/whisprgo.log
 ```
