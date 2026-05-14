@@ -27,14 +27,13 @@ fi
 # Clean up legacy log dir from older installs.
 rm -rf "$HOME/Library/Logs/whisprgo"
 
-if [ -d "$CONFIG_DIR" ]; then
-  printf "Remove API key and logs at %s? [y/N] " "$CONFIG_DIR"
-  read -r confirm
-  case "$confirm" in
-    y|Y) rm -rf "$CONFIG_DIR"; echo "Removed $CONFIG_DIR." ;;
-    *)   echo "Kept $CONFIG_DIR." ;;
-  esac
-fi
-
 echo ""
 echo "whisprgo uninstalled."
+
+if [ -d "$CONFIG_DIR" ]; then
+  echo ""
+  echo "Your API key and logs are still at $CONFIG_DIR."
+  echo "To remove them, run:"
+  echo ""
+  echo "  rm -rf $CONFIG_DIR"
+fi
