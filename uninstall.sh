@@ -7,9 +7,7 @@ PLIST_LABEL="com.whisprgo"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$PLIST_LABEL.plist"
 CONFIG_DIR="$HOME/.config/whisprgo"
-LOG_DIR="$HOME/Library/Logs/whisprgo"
 
-# Stop and remove service
 if launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; then
   echo "Stopping service..."
   launchctl bootout "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || \
@@ -21,29 +19,20 @@ if [ -f "$PLIST_PATH" ]; then
   echo "Removed LaunchAgent."
 fi
 
-# Remove binary
 if [ -f "$INSTALL_DIR/$BINARY" ]; then
   sudo rm "$INSTALL_DIR/$BINARY"
   echo "Removed $INSTALL_DIR/$BINARY."
 fi
 
-# Optionally remove config (API key)
-if [ -d "$CONFIG_DIR" ]; then
-  printf "Remove config (API key) at %s? [y/N] " "$CONFIG_DIR"
-  read -r confirm
-  case "$confirm" in
-    y|Y) rm -rf "$CONFIG_DIR"; echo "Removed config." ;;
-    *)   echo "Config kept at $CONFIG_DIR." ;;
-  esac
-fi
+# Clean up legacy log dir from older installs.
+rm -rf "$HOME/Library/Logs/whisprgo"
 
-# Optionally remove logs
-if [ -d "$LOG_DIR" ]; then
-  printf "Remove logs at %s? [y/N] " "$LOG_DIR"
+if [ -d "$CONFIG_DIR" ]; then
+  printf "Remove API key and logs at %s? [y/N] " "$CONFIG_DIR"
   read -r confirm
   case "$confirm" in
-    y|Y) rm -rf "$LOG_DIR"; echo "Removed logs." ;;
-    *)   echo "Logs kept at $LOG_DIR." ;;
+    y|Y) rm -rf "$CONFIG_DIR"; echo "Removed $CONFIG_DIR." ;;
+    *)   echo "Kept $CONFIG_DIR." ;;
   esac
 fi
 

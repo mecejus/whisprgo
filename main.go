@@ -46,13 +46,13 @@ func main() {
 	// macOS caches Accessibility denials per process: granting access mid-run
 	// doesn't take effect, and exiting risks a launchd respawn loop that
 	// re-fires the dialog. Trigger the system prompt once and block on
-	// signals — `brew services restart whisprgo` will kill us and the fresh
-	// process will see the grant. We deliberately do NOT raise our own dialog
-	// here: doing so steals focus from the System Settings window the prompt
+	// signals — a `launchctl kickstart -k` will kill us and the fresh process
+	// will see the grant. We deliberately do NOT raise our own dialog here:
+	// doing so steals focus from the System Settings window the prompt
 	// deeplinks to, which confuses users.
 	if !keyboard.HasAccess() {
 		keyboard.PromptForAccess()
-		fmt.Fprintln(os.Stderr, "Accessibility access is required. Grant it in System Settings, then run: brew services restart whisprgo")
+		fmt.Fprintln(os.Stderr, "Accessibility access is required. Grant it in System Settings, then run: launchctl kickstart -k \"gui/$(id -u)/com.whisprgo\"")
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig

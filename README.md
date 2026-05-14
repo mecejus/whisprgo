@@ -44,5 +44,5 @@ curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/uninstall.sh 
 ## Logs
 
 ```bash
-tail -f ~/Library/Logs/whisprgo/whisprgo.log
+tail -f ~/.config/whisprgo/whisprgo.log
 ```
