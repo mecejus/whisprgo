@@ -7,6 +7,15 @@ TAG="rolling-release"
 go build -ldflags="-s -w" -o "$ASSET" .
 trap 'rm -f "$ASSET"' EXIT
 
-gh release upload "$TAG" "$ASSET" --clobber
+COMMIT=$(git rev-parse HEAD)
+SHORT=$(git rev-parse --short HEAD)
 
-echo "Uploaded $ASSET to $TAG."
+# Replace the rolling release so the source archive matches the binary.
+gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+
+gh release create "$TAG" "$ASSET" \
+  --title "Whispr Go" \
+  --target "$COMMIT" \
+  --notes "Built from commit \`$SHORT\`."
+
+echo "Released $ASSET as $TAG ($SHORT)."
