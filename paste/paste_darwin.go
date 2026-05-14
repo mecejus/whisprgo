@@ -53,10 +53,10 @@ const (
 )
 
 // Paste writes text to the system pasteboard and issues Cmd+V to paste it
-// into the focused field. On success the pasted text is left on the
-// pasteboard. If the Cmd+V keystroke cannot be synthesised, the prior
-// pasteboard contents are restored so the clipboard is never left in a
-// half-written state. Requires Accessibility access.
+// into the focused field. A trailing space is appended so consecutive
+// dictations don't run together. The prior pasteboard contents are restored
+// after the paste settles, so the clipboard isn't left clobbered. Requires
+// Accessibility access.
 func Paste(text string) error {
 	if text == "" {
 		return nil
@@ -64,7 +64,7 @@ func Paste(text string) error {
 
 	original, hadOriginal := readPasteboard()
 
-	if err := writePasteboard(text); err != nil {
+	if err := writePasteboard(text + " "); err != nil {
 		return err
 	}
 
@@ -75,6 +75,16 @@ func Paste(text string) error {
 			_ = writePasteboard("")
 		}
 		return fmt.Errorf("could not post Cmd+V keystroke")
+	}
+
+	// Cmd+V is asynchronous — the focused app reads the pasteboard on its
+	// own schedule. Wait briefly before restoring so we don't overwrite the
+	// text before it's consumed.
+	time.Sleep(150 * time.Millisecond)
+	if hadOriginal {
+		_ = writePasteboard(original)
+	} else {
+		_ = writePasteboard("")
 	}
 
 	return nil
