@@ -69,15 +69,7 @@ func main() {
 
 	var isRecording atomic.Bool
 
-	// Agent-mode context, populated by onStart and consumed by onEnd. Safe to
-	// access without a mutex because the keyboard hook serialises onStart /
-	// onEnd pairs and isRecording guards re-entry.
-	var (
-		agentSelection     string
-		agentSelectionDone chan struct{}
-	)
-
-	onStart := func(mode keyboard.Mode) {
+	onStart := func() {
 		if !isRecording.CompareAndSwap(false, true) {
 			return
 		}
@@ -87,24 +79,10 @@ func main() {
 			return
 		}
 		playSound("/System/Library/Sounds/Blow.aiff")
-		if mode == keyboard.ModeAgent {
-			// Capture the focused app's selection (if any) off the event-tap
-			// thread so we don't stall keyboard delivery while pbpaste polls.
-			agentSelection = ""
-			agentSelectionDone = make(chan struct{})
-			go func(done chan struct{}) {
-				defer close(done)
-				if sel, ok := paste.CaptureSelection(); ok {
-					agentSelection = sel
-				}
-			}(agentSelectionDone)
-			fmt.Print("\r\033[K● Recording (agent)...")
-		} else {
-			fmt.Print("\r\033[K● Recording...")
-		}
+		fmt.Print("\r\033[K● Recording...")
 	}
 
-	onEnd := func(mode keyboard.Mode) {
+	onEnd := func() {
 		if !isRecording.CompareAndSwap(true, false) {
 			return
 		}
@@ -131,39 +109,6 @@ func main() {
 			return
 		}
 
-		if mode == keyboard.ModeAgent {
-			if agentSelectionDone != nil {
-				<-agentSelectionDone
-				agentSelectionDone = nil
-			}
-			selection := agentSelection
-			agentSelection = ""
-
-			prompt := text
-			if selection != "" {
-				prompt = "Selected text:\n" + selection + "\n\nInstruction: " + text
-				fmt.Printf("\r\033[K? [selection] %s\n", text)
-			} else {
-				fmt.Printf("\r\033[K? %s\n", text)
-			}
-			fmt.Print("◌ Thinking...")
-			answer, err := client.Ask(prompt)
-			if err != nil {
-				dialog.Error(fmt.Sprintf("LLM error: %v", err))
-				return
-			}
-			answer = strings.TrimSpace(answer)
-			if answer == "" {
-				fmt.Print("\r\033[K(no response)\n")
-				return
-			}
-			fmt.Printf("\r\033[K✓ %s\n", answer)
-			if err := paste.Paste(answer); err != nil {
-				dialog.Error(fmt.Sprintf("Paste error: %v", err))
-			}
-			return
-		}
-
 		fmt.Printf("\r\033[K✓ %s\n", text)
 		if err := paste.Paste(text); err != nil {
 			dialog.Error(fmt.Sprintf("Paste error: %v", err))
@@ -174,7 +119,7 @@ func main() {
 		fatal(fmt.Sprintf("Keyboard hook error: %v", err))
 	}
 
-	fmt.Println("whisprgo ready — hold [fn] to dictate, double-press to ask. Ctrl-C to quit.")
+	fmt.Println("whisprgo ready — hold [fn] to dictate. Ctrl-C to quit.")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

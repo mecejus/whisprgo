@@ -79,129 +79,23 @@ import "C"
 import (
 	"fmt"
 	"runtime"
-	"sync"
-	"time"
-)
-
-// Mode identifies which interaction the user is invoking.
-type Mode int
-
-const (
-	// ModeDictation is a plain hold of fn — record while held, transcribe on
-	// release.
-	ModeDictation Mode = iota
-	// ModeAgent is a quick tap of fn followed by a second press within the
-	// double-tap window — record on the second press, transcribe + LLM +
-	// speak on release.
-	ModeAgent
-)
-
-// tapThreshold is the maximum press duration that still counts as a "tap"
-// rather than a hold. Holds shorter than this never trigger dictation; their
-// release just opens the double-tap window for a possible agent press.
-const tapThreshold = 250 * time.Millisecond
-
-// doubleTapWindow is how long after a tap-release a second press can arrive
-// and still count as the agent trigger.
-const doubleTapWindow = 300 * time.Millisecond
-
-type fnState int
-
-const (
-	stateIdle fnState = iota
-	statePending
-	stateDictation
-	stateAgent
 )
 
 var (
-	onStart func(Mode)
-	onEnd   func(Mode)
-
-	mu           sync.Mutex
-	state        fnState
-	pendingTimer *time.Timer
-	tapDeadline  time.Time
+	onStart func()
+	onEnd   func()
 )
 
 //export goFnState
 func goFnState(pressed C.int) {
 	if pressed != 0 {
-		handlePress()
-	} else {
-		handleRelease()
-	}
-}
-
-func handlePress() {
-	mu.Lock()
-
-	if !tapDeadline.IsZero() && time.Now().Before(tapDeadline) {
-		// Second press of a double-tap → agent mode, fire immediately.
-		tapDeadline = time.Time{}
-		state = stateAgent
-		mu.Unlock()
 		if onStart != nil {
-			onStart(ModeAgent)
+			onStart()
 		}
-		return
-	}
-
-	// Tentative — could be a tap (no callback) or a hold (dictation).
-	// Defer firing onStart until we know it's a hold; the alternative is to
-	// fire on every press and retract on tap, which would briefly play the
-	// recording UI for the first tap of a double-tap.
-	state = statePending
-	if pendingTimer != nil {
-		pendingTimer.Stop()
-	}
-	pendingTimer = time.AfterFunc(tapThreshold, confirmDictation)
-	mu.Unlock()
-}
-
-func confirmDictation() {
-	mu.Lock()
-	if state != statePending {
-		mu.Unlock()
-		return
-	}
-	state = stateDictation
-	mu.Unlock()
-	if onStart != nil {
-		onStart(ModeDictation)
-	}
-}
-
-func handleRelease() {
-	mu.Lock()
-	switch state {
-	case statePending:
-		// Released before the hold threshold — a tap. Cancel the pending
-		// dictation timer and open the double-tap window for a possible
-		// agent press.
-		if pendingTimer != nil {
-			pendingTimer.Stop()
-			pendingTimer = nil
-		}
-		state = stateIdle
-		tapDeadline = time.Now().Add(doubleTapWindow)
-		mu.Unlock()
-	case stateDictation:
-		state = stateIdle
-		tapDeadline = time.Time{}
-		mu.Unlock()
+	} else {
 		if onEnd != nil {
-			onEnd(ModeDictation)
+			onEnd()
 		}
-	case stateAgent:
-		state = stateIdle
-		tapDeadline = time.Time{}
-		mu.Unlock()
-		if onEnd != nil {
-			onEnd(ModeAgent)
-		}
-	default:
-		mu.Unlock()
 	}
 }
 
@@ -218,13 +112,11 @@ func PromptForAccess() bool {
 	return C.promptForAccess() != 0
 }
 
-// Start registers fn-key callbacks and begins listening. onStart fires when a
-// recording session begins (either dictation, after a 250ms hold, or agent,
-// immediately on the second press of a double-tap). onEnd fires when the user
-// releases fn during an active session.
+// Start registers fn-key callbacks and begins listening. onStart fires the
+// moment fn is pressed; onEnd fires when it's released.
 //
 // Returns an error if Accessibility access has not been granted.
-func Start(start, end func(Mode)) error {
+func Start(start, end func()) error {
 	if C.hasAccess() == 0 {
 		return fmt.Errorf("accessibility access required")
 	}
