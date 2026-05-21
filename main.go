@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -17,9 +16,10 @@ import (
 	"whisprgo/paste"
 )
 
-func playSound(path string) {
-	exec.Command("afplay", path).Start()
-}
+const (
+	soundStart = 0
+	soundEnd   = 1
+)
 
 func fatal(message string) {
 	dialog.Error(message)
@@ -65,6 +65,18 @@ func main() {
 	}
 	defer recorder.Close()
 
+	player, err := audio.NewPlayer()
+	if err != nil {
+		fatal(fmt.Sprintf("Audio player init error: %v", err))
+	}
+	defer player.Close()
+	if err := player.Load(soundStart, "/System/Library/Sounds/Blow.aiff"); err != nil {
+		fatal(fmt.Sprintf("Load start sound: %v", err))
+	}
+	if err := player.Load(soundEnd, "/System/Library/Sounds/Bottle.aiff"); err != nil {
+		fatal(fmt.Sprintf("Load end sound: %v", err))
+	}
+
 	client := &groq.Client{APIKey: cfg.APIKey}
 
 	var isRecording atomic.Bool
@@ -78,7 +90,7 @@ func main() {
 			dialog.Error(fmt.Sprintf("Recorder start error: %v", err))
 			return
 		}
-		playSound("/System/Library/Sounds/Blow.aiff")
+		player.Play(soundStart)
 		fmt.Print("\r\033[K● Recording...")
 	}
 
@@ -86,7 +98,7 @@ func main() {
 		if !isRecording.CompareAndSwap(true, false) {
 			return
 		}
-		playSound("/System/Library/Sounds/Bottle.aiff")
+		player.Play(soundEnd)
 		wavData, err := recorder.Stop()
 		if err != nil {
 			dialog.Error(fmt.Sprintf("Recorder stop error: %v", err))
