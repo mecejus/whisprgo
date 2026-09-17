@@ -11,7 +11,11 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded branch builds are worth cancelling; a release is not. Cancelling
+  # main mid-run can land between `gh release delete --cleanup-tag` and
+  # `gh release create`, leaving no release at all -- and install.sh resolves
+  # /releases/latest, so that breaks installs until the next merge.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
