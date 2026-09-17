@@ -1,0 +1,125 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # whisprgo is cgo against CoreGraphics/AudioToolbox, so it can only be
+    # compiled on macOS. macos-latest is Apple Silicon; the guard below fails
+    # loudly rather than silently shipping an x86_64 binary if that changes.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: |
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "Runner is $(uname -m), expected arm64" >&2
+            exit 1
+          fi
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o whisprgo-darwin-arm64 .
+          file whisprgo-darwin-arm64
+
+      - name: Smoke test
+        # No TTY, no Accessibility grant and no microphone on the runner, so
+        # the binary can't do real work here. What this does catch is a broken
+        # dynamic link -- a missing framework or symbol from the cgo changes --
+        # which compiling alone does not.
+        run: |
+          mkdir -p "$HOME/.config/whisprgo"
+          printf '{"api_key":"ci-smoke-test"}' > "$HOME/.config/whisprgo/config.json"
+
+          echo "--- linked libraries ---"
+          otool -L whisprgo-darwin-arm64
+
+          set +e
+          out=$( { timeout 20 ./whisprgo-darwin-arm64; } 2>&1 )
+          code=$?
+          set -e
+          echo "--- exit=$code ---"
+          echo "$out"
+
+          if echo "$out" | grep -qiE "dyld|symbol not found|image not found|signal SIG"; then
+            echo "Dynamic linking failure" >&2
+            exit 1
+          fi
+          # 124 = still running when timeout killed it (the healthy case: it is
+          # parked waiting for the Accessibility grant). 0/1 = it made a
+          # decision and exited. Anything >=128 is a crash.
+          if [ "$code" -ge 128 ] && [ "$code" -ne 124 ]; then
+            echo "Binary crashed with code $code" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisprgo-darwin-arm64
+          path: whisprgo-darwin-arm64
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisprgo-darwin-arm64
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x whisprgo-darwin-arm64
+          short=$(git rev-parse --short "$GITHUB_SHA")
+
+          # Replace the rolling release so its source archive matches the
+          # binary. install.sh resolves /releases/latest, which follows it.
+          gh release delete rolling-release --yes --cleanup-tag || true
+
+          for attempt in 1 2 3; do
+            if gh release create rolling-release whisprgo-darwin-arm64 \
+                 --title "Whispr Go" \
+                 --target "$GITHUB_SHA" \
+                 --notes "Built from commit \`$short\`."; then
+              exit 0
+            fi
+            echo "Release create failed (attempt $attempt); the deleted tag may"
+            echo "not have propagated yet. Retrying..."
+            sleep $((attempt * 5))
+          done
+          echo "Could not publish release" >&2
+          exit 1

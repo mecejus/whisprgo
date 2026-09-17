@@ -19,11 +19,36 @@ import (
 const (
 	soundStart = 0
 	soundEnd   = 1
+
+	// Ignore anything shorter than this; it's a stray tap, not speech.
+	minSamples = audio.SampleRate / 3
+
+	// How many finished recordings may wait on transcription. Deep enough to
+	// absorb rapid-fire dictation, shallow enough that a wedged network
+	// surfaces as an error instead of unbounded memory growth.
+	queueDepth = 8
 )
 
 func fatal(message string) {
 	dialog.Error(message)
 	os.Exit(1)
+}
+
+// dialogOpen serializes error dialogs. osascript blocks until the user clicks
+// OK, so a dialog must never run on the dictation path, and a burst of errors
+// must not bury the screen in modal windows.
+var dialogOpen atomic.Bool
+
+func reportError(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "\r\033[K%s\n", msg)
+	if !dialogOpen.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer dialogOpen.Store(false)
+		dialog.Error(msg)
+	}()
 }
 
 func main() {
@@ -65,6 +90,12 @@ func main() {
 	}
 	defer recorder.Close()
 
+	// Build the input queue now rather than on the first keypress, so the
+	// first dictation is as responsive as the rest.
+	if err := recorder.Prime(); err != nil {
+		fatal(fmt.Sprintf("Audio init error: %v", err))
+	}
+
 	player, err := audio.NewPlayer()
 	if err != nil {
 		fatal(fmt.Sprintf("Audio player init error: %v", err))
@@ -79,18 +110,34 @@ func main() {
 
 	client := &groq.Client{APIKey: cfg.APIKey}
 
+	// Transcription runs behind the key handlers so releasing fn never blocks
+	// the next press. A single worker keeps pastes in the order they were
+	// dictated.
+	jobs := make(chan []int16, queueDepth)
+	go func() {
+		for samples := range jobs {
+			transcribe(client, samples)
+		}
+	}()
+
 	var isRecording atomic.Bool
 
 	onStart := func() {
 		if !isRecording.CompareAndSwap(false, true) {
 			return
 		}
+		// Chime first: it's lock-free against an already-running output unit,
+		// so it lands immediately and tells the user to start talking. Arming
+		// the mic behind it costs nothing they can hear.
+		player.Play(soundStart)
 		if err := recorder.Start(); err != nil {
 			isRecording.Store(false)
-			dialog.Error(fmt.Sprintf("Recorder start error: %v", err))
+			reportError("Recorder start error: %v", err)
 			return
 		}
-		player.Play(soundStart)
+		// We know an upload is coming in a few seconds. Get the connection up
+		// while they talk.
+		client.Warm()
 		fmt.Print("\r\033[K● Recording...")
 	}
 
@@ -99,31 +146,20 @@ func main() {
 			return
 		}
 		player.Play(soundEnd)
-		wavData, err := recorder.Stop()
+		samples, err := recorder.Stop()
 		if err != nil {
-			dialog.Error(fmt.Sprintf("Recorder stop error: %v", err))
+			reportError("Recorder stop error: %v", err)
 			return
 		}
-		// skip recordings shorter than ~0.3 s
-		if len(wavData) < 44+16000*2/3 {
+		if len(samples) < minSamples {
 			fmt.Print("\r\033[K(too short)\n")
 			return
 		}
 		fmt.Print("\r\033[K◌ Transcribing...")
-		text, err := client.Transcribe(wavData)
-		if err != nil {
-			dialog.Error(fmt.Sprintf("Transcription error: %v", err))
-			return
-		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			fmt.Print("\r\033[K(no speech detected)\n")
-			return
-		}
-
-		fmt.Printf("\r\033[K✓ %s\n", text)
-		if err := paste.Paste(text); err != nil {
-			dialog.Error(fmt.Sprintf("Paste error: %v", err))
+		select {
+		case jobs <- samples:
+		default:
+			reportError("Transcription backlog is full — dropped a recording.")
 		}
 	}
 
@@ -137,4 +173,24 @@ func main() {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	fmt.Println("\nBye.")
+}
+
+func transcribe(client *groq.Client, samples []int16) {
+	data, filename := audio.Encode(samples)
+
+	text, err := client.Transcribe(data, filename)
+	if err != nil {
+		reportError("Transcription error: %v", err)
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		fmt.Print("\r\033[K(no speech detected)\n")
+		return
+	}
+
+	fmt.Printf("\r\033[K✓ %s\n", text)
+	if err := paste.Paste(text); err != nil {
+		reportError("Paste error: %v", err)
+	}
 }
