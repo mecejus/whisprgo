@@ -47,12 +47,18 @@ jobs:
           fi
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o whisprgo-darwin-arm64 .
           file whisprgo-darwin-arm64
+          file whisprgo-darwin-arm64 | grep -q "arm64" || {
+            echo "Built binary is not arm64" >&2; exit 1; }
 
       - name: Smoke test
         # No TTY, no Accessibility grant and no microphone on the runner, so
         # the binary can't do real work here. What this does catch is a broken
         # dynamic link -- a missing framework or symbol from the cgo changes --
         # which compiling alone does not.
+        #
+        # Deliberately no `timeout`: macOS ships no such command, and the
+        # resulting 127 made an earlier version of this step pass without ever
+        # running the binary.
         run: |
           mkdir -p "$HOME/.config/whisprgo"
           printf '{"api_key":"ci-smoke-test"}' > "$HOME/.config/whisprgo/config.json"
@@ -60,22 +66,37 @@ jobs:
           echo "--- linked libraries ---"
           otool -L whisprgo-darwin-arm64
 
-          set +e
-          out=$( { timeout 20 ./whisprgo-darwin-arm64; } 2>&1 )
-          code=$?
-          set -e
-          echo "--- exit=$code ---"
-          echo "$out"
+          echo "--- launching ---"
+          ./whisprgo-darwin-arm64 > smoke.log 2>&1 &
+          pid=$!
+          sleep 10
 
-          if echo "$out" | grep -qiE "dyld|symbol not found|image not found|signal SIG"; then
-            echo "Dynamic linking failure" >&2
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "still alive after 10s (expected: parked on the Accessibility gate)"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            exited=""
+          else
+            set +e
+            wait "$pid"
+            exited=$?
+            set -e
+            echo "exited early with code $exited"
+          fi
+
+          echo "--- output ---"
+          cat smoke.log || true
+
+          if grep -qiE "dyld|symbol not found|image not found|signal SIG|panic:" smoke.log; then
+            echo "Binary failed to start cleanly" >&2
             exit 1
           fi
-          # 124 = still running when timeout killed it (the healthy case: it is
-          # parked waiting for the Accessibility grant). 0/1 = it made a
-          # decision and exited. Anything >=128 is a crash.
-          if [ "$code" -ge 128 ] && [ "$code" -ne 124 ]; then
-            echo "Binary crashed with code $code" >&2
+
+          # Still running is the healthy case. An early exit is only acceptable
+          # if it was a deliberate one (0, or 1 from fatal() when the runner
+          # has no audio device); anything else means it crashed.
+          if [ -n "$exited" ] && [ "$exited" -ne 0 ] && [ "$exited" -ne 1 ]; then
+            echo "Unexpected exit code $exited" >&2
             exit 1
           fi
 
