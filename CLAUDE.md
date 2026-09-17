@@ -22,6 +22,26 @@ user's laptop — no local `go build`, no Xcode, no manual `gh release`. The one
 thing only they can do is install the published binary on their own Mac and
 speak into it; everything up to that point happens here.
 
+### Land work through a PR, not a push to main
+
+Always open a PR from the working branch and merge that, even for a one-line
+change and even when the branch would fast-forward cleanly. Ask before merging;
+the user may want to read the diff first.
+
+Pushing straight to `main` produces the same commits but skips the two things
+the PR is there for:
+
+- **The branch is never cleaned up.** Auto-delete-on-merge fires on a *PR
+  merge*. A fast-forward push leaves the branch behind, already merged, looking
+  stale forever. Someone then has to delete it by hand.
+- **There is no reviewable artifact.** The PR is where CI results, the diff and
+  the decision to ship are recorded together.
+
+Squash-merge unless the branch's individual commits are worth keeping.
+
+After the merge, do not keep working on the old branch — it no longer exists on
+the remote. Restart it from `main` as described under Branch auto-deletion.
+
 ### You cannot compile this project in a cloud session
 
 The session runs on Linux. Every package except `config` and `groq` is cgo
