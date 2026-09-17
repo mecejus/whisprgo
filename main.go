@@ -91,9 +91,12 @@ func main() {
 	defer recorder.Close()
 
 	// Build the input queue now rather than on the first keypress, so the
-	// first dictation is as responsive as the rest.
+	// first dictation is as responsive as the rest. Not fatal if it fails:
+	// under launchd we are KeepAlive, so exiting here over a device that
+	// isn't enumerated yet at login would just respawn-loop. Start() primes
+	// on demand, and reports the error where the user can act on it.
 	if err := recorder.Prime(); err != nil {
-		fatal(fmt.Sprintf("Audio init error: %v", err))
+		fmt.Fprintf(os.Stderr, "Audio warm-up failed, retrying on first use: %v\n", err)
 	}
 
 	player, err := audio.NewPlayer()

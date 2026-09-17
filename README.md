@@ -42,3 +42,17 @@ curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/uninstall.sh 
 ```bash
 tail -f ~/.config/whisprgo/whisprgo.log
 ```
+
+## Building
+
+Releases are built on GitHub's Apple Silicon runners and published
+automatically on every push to `main` — see
+[`.github/workflows/build.yml`](.github/workflows/build.yml). Nothing needs to
+be compiled locally. Every branch and pull request gets the same build, vet and
+smoke test, with the binary attached to the run as an artifact.
+
+To publish a release by hand:
+
+```bash
+./release.sh    # triggers the workflow; requires the gh CLI
+```
