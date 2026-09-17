@@ -39,6 +39,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test
+        run: go test ./... -v
+
       - name: Build
         run: |
           if [ "$(uname -m)" != "arm64" ]; then
