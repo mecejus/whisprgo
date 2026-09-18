@@ -17,10 +17,6 @@ curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/install.sh | 
 It asks for your API key and for Accessibility access, then says **All set**.
 whisprgo runs from then on, including after a restart.
 
-## Use
-
-Click where you want the text, hold **fn**, talk, let go.
-
 Tip: stop fn from opening the emoji picker under
 **System Settings → Keyboard → Press 🌐 key to → Do Nothing**.
 
