@@ -117,36 +117,16 @@ import "C"
 
 import (
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
-const (
-	// SampleRate is the capture rate in Hz. Whisper resamples everything to
-	// 16 kHz mono anyway, so capturing at exactly that avoids sending bytes
-	// the model throws away.
-	SampleRate = 16000
-	channels   = 1
-
-	// maxRecordSeconds caps a single dictation. Without it, one missed key-up
-	// records until the process dies and then tries to upload the result.
-	maxRecordSeconds = 300
-	maxSamples       = SampleRate * maxRecordSeconds
-
-	// Pre-size the capture buffer for a typical dictation so the audio
-	// callback isn't growing a multi-megabyte slice mid-sentence.
-	initialCapacity = SampleRate * 30
-)
-
-var (
-	activeMu sync.Mutex
-	active   *Recorder
-)
+// active is the capture the audio thread is currently filling, or nil
+// between recordings.
+var active atomic.Pointer[Capture]
 
 type Recorder struct {
-	mu      sync.Mutex
-	samples []int16
-	state   *C.whispr_recorder
+	state *C.whispr_recorder
 }
 
 func New() (*Recorder, error) {
@@ -174,64 +154,41 @@ func (r *Recorder) Close() {
 	}
 }
 
-func (r *Recorder) Start() error {
-	r.mu.Lock()
-	r.samples = make([]int16, 0, initialCapacity)
-	r.mu.Unlock()
-
-	activeMu.Lock()
-	active = r
-	activeMu.Unlock()
-
+// Start begins capturing and returns the Capture that fills up as the user
+// speaks. Consumers may read it immediately; they do not have to wait for
+// Stop.
+func (r *Recorder) Start() (*Capture, error) {
+	c := newCapture()
+	active.Store(c)
 	if rc := C.whispr_recorder_start(r.state); rc != 0 {
-		activeMu.Lock()
-		active = nil
-		activeMu.Unlock()
-		return fmt.Errorf("AudioQueue start: OSStatus %d", int(rc))
+		active.Store(nil)
+		c.finish()
+		return nil, fmt.Errorf("AudioQueue start: OSStatus %d", int(rc))
 	}
-	return nil
+	return c, nil
 }
 
-// Stop ends capture and returns the recorded PCM. The returned slice is the
-// recorder's buffer handed off wholesale — the recorder does not touch it
-// again, so the caller may keep it while a later recording is under way.
-func (r *Recorder) Stop() ([]int16, error) {
+// Stop ends capture and marks the current Capture complete. The synchronous
+// queue stop flushes the partially filled buffer through the callback first,
+// so the tail of the recording lands in the Capture before it is finished.
+func (r *Recorder) Stop() {
 	C.whispr_recorder_stop(r.state)
-
-	activeMu.Lock()
-	active = nil
-	activeMu.Unlock()
-
-	r.mu.Lock()
-	samples := r.samples
-	r.samples = nil
-	r.mu.Unlock()
-
-	return samples, nil
+	if c := active.Swap(nil); c != nil {
+		c.finish()
+	}
 }
 
 //export whisprAudioCallback
 func whisprAudioCallback(data unsafe.Pointer, byteCount C.int) {
-	activeMu.Lock()
-	r := active
-	activeMu.Unlock()
-	if r == nil {
+	c := active.Load()
+	if c == nil {
 		return
 	}
 	n := int(byteCount) / 2
 	if n == 0 {
 		return
 	}
-	src := unsafe.Slice((*int16)(data), n)
-
-	r.mu.Lock()
-	if room := maxSamples - len(r.samples); room > 0 {
-		if n > room {
-			src = src[:room]
-		}
-		// append copies; the staging slice the old code built first was pure
-		// overhead on a realtime audio thread.
-		r.samples = append(r.samples, src...)
-	}
-	r.mu.Unlock()
+	// push copies out of the AudioQueue buffer; the staging slice the old
+	// code built first was pure overhead on a realtime audio thread.
+	c.push(unsafe.Slice((*int16)(data), n))
 }

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"whisprgo/audio"
 	"whisprgo/config"
@@ -23,9 +26,9 @@ const (
 	// Ignore anything shorter than this; it's a stray tap, not speech.
 	minSamples = audio.SampleRate / 3
 
-	// How many finished recordings may wait on transcription. Deep enough to
-	// absorb rapid-fire dictation, shallow enough that a wedged network
-	// surfaces as an error instead of unbounded memory growth.
+	// How many dictations may be in flight at once. Deep enough to absorb
+	// rapid-fire dictation, shallow enough that a wedged network surfaces as
+	// an error instead of unbounded memory growth.
 	queueDepth = 8
 )
 
@@ -49,6 +52,51 @@ func reportError(format string, args ...any) {
 		defer dialogOpen.Store(false)
 		dialog.Error(msg)
 	}()
+}
+
+// job is one dictation, from the key going down to the text being pasted.
+//
+// Transcription starts the moment the recording is long enough to be
+// speech, not when the key comes up: the audio is uploaded as it is captured,
+// so by the release only the last fraction of a second is left to send and
+// the API's answer is what the user waits for.
+type job struct {
+	capture *audio.Capture
+	// released is the key-up time (UnixNano), for the latency shown in the log.
+	released atomic.Int64
+	text     string
+	done     chan struct{}
+}
+
+func (j *job) run(client *groq.Client) {
+	defer close(j.done)
+
+	// Don't open a request for a stray tap.
+	if n, ended := j.capture.Wait(minSamples); ended && n < minSamples {
+		fmt.Print("\r\033[K(too short)\n")
+		return
+	}
+
+	text, err := client.Transcribe(context.Background(), groq.Upload{
+		Filename: "audio.flac",
+		Stream: func(w io.Writer) error {
+			return audio.StreamFLAC(w, j.capture)
+		},
+		Buffered: func() ([]byte, error) {
+			j.capture.WaitDone()
+			return audio.EncodeFLAC(j.capture.Samples())
+		},
+	})
+	if err != nil {
+		reportError("Transcription error: %v", err)
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		fmt.Print("\r\033[K(no speech detected)\n")
+		return
+	}
+	j.text = text
 }
 
 func main() {
@@ -111,59 +159,75 @@ func main() {
 		fatal(fmt.Sprintf("Load end sound: %v", err))
 	}
 
-	client := &groq.Client{APIKey: cfg.APIKey}
+	client := &groq.Client{
+		APIKey:   cfg.APIKey,
+		Model:    cfg.Model,
+		Language: cfg.Language,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "\r\033[K"+format+"\n", args...)
+		},
+	}
 
-	// Transcription runs behind the key handlers so releasing fn never blocks
-	// the next press. A single worker keeps pastes in the order they were
-	// dictated.
-	jobs := make(chan []int16, queueDepth)
+	// Pasting runs behind the key handlers so releasing fn never blocks the
+	// next press. Jobs are queued in the order dictations began and pasted in
+	// that order, however their transcriptions come back.
+	jobs := make(chan *job, queueDepth)
 	go func() {
-		for samples := range jobs {
-			transcribe(client, samples)
+		for j := range jobs {
+			<-j.done
+			if j.text == "" {
+				continue
+			}
+			wait := time.Since(time.Unix(0, j.released.Load()))
+			fmt.Printf("\r\033[K✓ %s  [%d ms after release]\n", j.text, wait.Milliseconds())
+			if err := paste.Paste(j.text); err != nil {
+				reportError("Paste error: %v", err)
+			}
 		}
 	}()
 
-	var isRecording atomic.Bool
+	// onStart and onEnd run on the keyboard package's single dispatch
+	// goroutine, so current needs no locking.
+	var current *job
 
 	onStart := func() {
-		if !isRecording.CompareAndSwap(false, true) {
+		if current != nil {
 			return
 		}
 		// Chime first: it's lock-free against an already-running output unit,
 		// so it lands immediately and tells the user to start talking. Arming
 		// the mic behind it costs nothing they can hear.
 		player.Play(soundStart)
-		if err := recorder.Start(); err != nil {
-			isRecording.Store(false)
+		capture, err := recorder.Start()
+		if err != nil {
 			reportError("Recorder start error: %v", err)
 			return
 		}
-		// We know an upload is coming in a few seconds. Get the connection up
-		// while they talk.
+		// The upload starts a third of a second from now. Have the connection
+		// ready for it.
 		client.Warm()
+
+		j := &job{capture: capture, done: make(chan struct{})}
+		current = j
+		select {
+		case jobs <- j:
+			go j.run(client)
+		default:
+			reportError("Transcription backlog is full — this recording will be discarded.")
+		}
 		fmt.Print("\r\033[K● Recording...")
 	}
 
 	onEnd := func() {
-		if !isRecording.CompareAndSwap(true, false) {
+		j := current
+		if j == nil {
 			return
 		}
+		current = nil
 		player.Play(soundEnd)
-		samples, err := recorder.Stop()
-		if err != nil {
-			reportError("Recorder stop error: %v", err)
-			return
-		}
-		if len(samples) < minSamples {
-			fmt.Print("\r\033[K(too short)\n")
-			return
-		}
+		j.released.Store(time.Now().UnixNano())
+		recorder.Stop()
 		fmt.Print("\r\033[K◌ Transcribing...")
-		select {
-		case jobs <- samples:
-		default:
-			reportError("Transcription backlog is full — dropped a recording.")
-		}
 	}
 
 	if err := keyboard.Start(onStart, onEnd); err != nil {
@@ -176,24 +240,4 @@ func main() {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	fmt.Println("\nBye.")
-}
-
-func transcribe(client *groq.Client, samples []int16) {
-	data, filename := audio.Encode(samples)
-
-	text, err := client.Transcribe(data, filename)
-	if err != nil {
-		reportError("Transcription error: %v", err)
-		return
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		fmt.Print("\r\033[K(no speech detected)\n")
-		return
-	}
-
-	fmt.Printf("\r\033[K✓ %s\n", text)
-	if err := paste.Paste(text); err != nil {
-		reportError("Paste error: %v", err)
-	}
 }

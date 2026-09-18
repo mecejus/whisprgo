@@ -8,6 +8,15 @@ import (
 
 type Config struct {
 	APIKey string `json:"api_key"`
+
+	// Model overrides the transcription model. Empty means the default,
+	// whisper-large-v3 (most accurate). whisper-large-v3-turbo answers a
+	// little sooner at a small cost in accuracy.
+	Model string `json:"model,omitempty"`
+
+	// Language is an optional ISO-639-1 hint such as "en". Naming the language
+	// lets the model skip detecting it. Empty means auto-detect.
+	Language string `json:"language,omitempty"`
 }
 
 func configPath() string {
