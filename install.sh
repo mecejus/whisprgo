@@ -37,7 +37,7 @@ have_identity() {
 }
 
 create_identity() {
-  echo "Creating a local code-signing certificate (first install only)..."
+  printf '\r\033[KSetting up code signing (first time only)...'
   work=$(mktemp -d)
   cat > "$work/openssl.cnf" <<CNF
 [req]
@@ -99,8 +99,14 @@ if [ "$1" = "sign" ]; then
   exit 0
 fi
 
+# Progress helpers. Every step prints one line; anything that takes more
+# than a moment shows a spinner with elapsed seconds so the person can see
+# the installer is alive.
+step() { printf '%s\n' "$1"; }
+done_line() { printf '\r\033[K%s done\n' "$1"; }
+
 echo ""
-echo "Installing whisprgo..."
+step "Checking for the latest version..."
 TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
   "https://github.com/$REPO/releases/latest" | sed 's|.*/||')
 
@@ -116,7 +122,8 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL "https://github.com/$REPO/releases/download/$TAG/$BINARY-darwin-arm64" \
+step "Downloading whisprgo $TAG..."
+curl -fL# "https://github.com/$REPO/releases/download/$TAG/$BINARY-darwin-arm64" \
   -o "$TMP/$BINARY"
 
 # An installed binary that is not signed with our certificate (a build from
@@ -134,13 +141,16 @@ if [ ! -f "$CONFIG_DIR/config.json" ]; then
   FIRST_RUN=1
 fi
 
+printf 'Signing...'
 sign_binary "$TMP/$BINARY"
+done_line "Signing..."
 
 if ! sudo -n true 2>/dev/null; then
   echo "Your Mac will now ask for your password. That is to place whisprgo in $INSTALL_DIR."
 fi
 sudo mkdir -p "$INSTALL_DIR"
 sudo install -m 755 "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
+step "Installed to $INSTALL_DIR/$BINARY."
 
 # There is no scripted way to drop the stale Accessibility row: tccutil only
 # takes bundle identifiers, and the binary has none. The user removes it.
@@ -199,7 +209,7 @@ if [ "$FIRST_RUN" = 1 ]; then
   echo "  2. A macOS message about Accessibility."
   echo "     Click \"Open System Settings\" and switch whisprgo on."
   echo ""
-  echo "Waiting for you to do those... (you can leave this window open)"
+  WAIT_MSG="Waiting for you to do those (leave this window open)"
 elif [ "$REGRANT" = 1 ]; then
   echo "Almost done. macOS will ask for Accessibility access one more time."
   echo "From this version on it stays granted across updates."
@@ -207,26 +217,31 @@ elif [ "$REGRANT" = 1 ]; then
   echo "  Click \"Open System Settings\". If whisprgo is already in the list,"
   echo "  select it and press the minus (-) button. Then switch whisprgo on."
   echo ""
-  echo "Waiting for you to do that... (you can leave this window open)"
+  WAIT_MSG="Waiting for you to do that (leave this window open)"
 else
-  echo "Updated. Starting whisprgo..."
+  WAIT_MSG="Starting whisprgo"
 fi
 
-# Poll this launch's log lines for the ready marker. The API key dialog is
-# the slow part, so allow ten minutes before giving up on the wait itself.
-waited=0
-while [ "$waited" -lt 600 ]; do
+# Poll this launch's log lines for the ready marker, four times a second,
+# behind a spinner. The API key dialog is the slow part, so allow ten
+# minutes before giving up on the wait itself.
+ticks=0
+while [ "$ticks" -lt 2400 ]; do
   if [ -f "$LOG_FILE" ] && \
      tail -n +"$((LOG_START + 1))" "$LOG_FILE" | grep -q "whisprgo ready"; then
-    echo ""
+    printf '\r\033[K'
     echo "All set. Hold the fn key, talk, let go. Your words appear where you were typing."
     exit 0
   fi
-  sleep 1
-  waited=$((waited + 1))
+  case $((ticks % 4)) in
+    0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;;
+  esac
+  printf '\r\033[K%s %s... %ss ' "$c" "$WAIT_MSG" "$((ticks / 4))"
+  sleep 0.25
+  ticks=$((ticks + 1))
 done
 
-echo ""
+printf '\r\033[K'
 echo "Still waiting, and that is fine. whisprgo keeps checking in the background"
 echo "and starts by itself as soon as you switch it on in System Settings."
 echo "You can close this window."
