@@ -37,6 +37,25 @@ func fatal(message string) {
 	os.Exit(1)
 }
 
+// relaunchedEnv marks a process that already replaced itself once after a
+// mid-run Accessibility grant, so a second failure is reported, not retried.
+const relaunchedEnv = "WHISPRGO_RELAUNCHED"
+
+// relaunch replaces this process with a fresh copy of the same binary. Same
+// PID, so launchd keeps tracking it. Only returns if the exec itself failed.
+func relaunch() {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Relaunch failed: %v\n", err)
+		return
+	}
+	fmt.Fprintln(os.Stderr, "Event tap refused after the grant; relaunching to pick it up.")
+	env := append(os.Environ(), relaunchedEnv+"=1")
+	if err := syscall.Exec(exe, os.Args, env); err != nil {
+		fmt.Fprintf(os.Stderr, "Relaunch failed: %v\n", err)
+	}
+}
+
 // dialogOpen serializes error dialogs. osascript blocks until the user clicks
 // OK, so a dialog must never run on the dictation path, and a burst of errors
 // must not bury the screen in modal windows.
@@ -116,20 +135,30 @@ func main() {
 		}
 	}
 
-	// macOS caches Accessibility denials per process: granting access mid-run
-	// doesn't take effect, and exiting risks a launchd respawn loop that
-	// re-fires the dialog. Trigger the system prompt once and block on
-	// signals — a `launchctl kickstart -k` will kill us and the fresh process
-	// will see the grant. We deliberately do NOT raise our own dialog here:
-	// doing so steals focus from the System Settings window the prompt
-	// deeplinks to, which confuses users.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+
+	// Accessibility is granted to this binary in System Settings, and the
+	// grant shows up in AXIsProcessTrusted while we are running. So trigger
+	// the system prompt once, poll until it is granted, and carry on in this
+	// process: no restart, no launchd respawn loop that re-fires the dialog.
+	// We deliberately do NOT raise our own dialog here: doing so steals focus
+	// from the System Settings window the prompt deeplinks to.
+	grantedMidRun := false
 	if !keyboard.HasAccess() {
 		keyboard.PromptForAccess()
-		fmt.Fprintln(os.Stderr, "Accessibility access is required. Grant it in System Settings, then run: launchctl kickstart -k \"gui/$(id -u)/com.whisprgo\"")
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
-		return
+		fmt.Fprintln(os.Stderr, "Waiting for Accessibility access: in System Settings > Privacy & Security > Accessibility, turn whisprgo on. (Already on? Turn it off and on again.) whisprgo starts by itself once granted.")
+		tick := time.NewTicker(time.Second)
+		for !keyboard.HasAccess() {
+			select {
+			case <-sig:
+				return
+			case <-tick.C:
+			}
+		}
+		tick.Stop()
+		grantedMidRun = true
+		fmt.Fprintln(os.Stderr, "Accessibility access granted.")
 	}
 
 	recorder, err := audio.New()
@@ -231,13 +260,18 @@ func main() {
 	}
 
 	if err := keyboard.Start(onStart, onEnd); err != nil {
+		// A grant that arrived mid-run is visible to AXIsProcessTrusted, but
+		// on some systems the window server still remembers the earlier
+		// refusal for this process. A fresh process sees the grant, so
+		// replace ourselves once; the marker stops a loop if that fails too.
+		if grantedMidRun && os.Getenv(relaunchedEnv) == "" {
+			relaunch()
+		}
 		fatal(fmt.Sprintf("Keyboard hook error: %v", err))
 	}
 
 	fmt.Println("whisprgo ready — hold [fn] to dictate. Ctrl-C to quit.")
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	fmt.Println("\nBye.")
 }

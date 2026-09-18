@@ -71,15 +71,44 @@ cat > "$PLIST_PATH" <<PLIST
 </plist>
 PLIST
 
+# The service appends to the log, so remember where this launch's output
+# starts: older runs have already printed the ready line.
+LOG_START=0
+if [ -f "$LOG_FILE" ]; then
+  LOG_START=$(wc -l < "$LOG_FILE" | tr -d ' ')
+fi
+
 launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 
 echo ""
-echo "whisprgo $TAG installed and service started."
+echo "whisprgo $TAG installed and started."
 echo ""
-echo "On first launch a dialog will ask for your Groq API key"
-echo "(https://console.groq.com), then macOS will request"
-echo "Accessibility access. Grant it in System Settings, then restart:"
+echo "Two dialogs will appear on first launch:"
 echo ""
-echo "  launchctl kickstart -k \"gui/\$(id -u)/$PLIST_LABEL\""
+echo "  1. Paste your Groq API key (free at https://console.groq.com)."
+echo "  2. Accessibility: click \"Open System Settings\" and turn whisprgo on."
+echo "     Already listed and on? Turn it off and on again."
+echo ""
+echo "No restart needed: whisprgo starts by itself once access is granted."
+echo "Waiting for it... (Ctrl-C stops waiting; the service keeps running.)"
+
+# Poll this launch's log lines for the ready marker. The API key dialog is
+# the slow part, so allow ten minutes before giving up on the wait itself.
+waited=0
+while [ "$waited" -lt 600 ]; do
+  if [ -f "$LOG_FILE" ] && \
+     tail -n +"$((LOG_START + 1))" "$LOG_FILE" | grep -q "whisprgo ready"; then
+    echo ""
+    echo "whisprgo is ready. Hold [fn] and speak; release to paste."
+    exit 0
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+
+echo ""
+echo "Still waiting for access. The service keeps trying; once whisprgo is"
+echo "turned on under System Settings > Privacy & Security > Accessibility"
+echo "it starts on its own."
 echo ""
 echo "Logs:  tail -f $LOG_FILE"
