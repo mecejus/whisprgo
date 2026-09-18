@@ -26,6 +26,8 @@ fi
 
 # Clean up legacy log dir from older installs.
 rm -rf "$HOME/Library/Logs/whisprgo"
+# The Accessibility-prompt marker is only meaningful to a running service.
+rm -f "$CONFIG_DIR/access-prompted"
 
 echo ""
 echo "whisprgo uninstalled."
