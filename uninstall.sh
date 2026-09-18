@@ -29,6 +29,14 @@ rm -rf "$HOME/Library/Logs/whisprgo"
 # The Accessibility-prompt marker is only meaningful to a running service.
 rm -f "$CONFIG_DIR/access-prompted"
 
+# The local code-signing certificate lives in its own keychain.
+KEYCHAIN="$HOME/Library/Keychains/whisprgo-signing.keychain-db"
+if [ -f "$KEYCHAIN" ]; then
+  security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
+  echo "Removed signing keychain."
+fi
+rm -f "$CONFIG_DIR/signing-keychain-password"
+
 echo ""
 echo "whisprgo uninstalled."
 

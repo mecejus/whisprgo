@@ -136,6 +136,22 @@ The user's Groq API key lives in `~/.config/whisprgo/config.json` on their Mac
 and is prompted for on first launch. It must never reach CI, the repository, or
 a workflow input. The smoke test writes a dummy key to get past the prompt.
 
+### Code signing happens on the user's Mac, not in CI
+
+macOS ties an Accessibility grant to the binary's code signature. Go signs ad
+hoc, which binds the grant to one build's hash, so an upgrade used to need the
+grant removed and re-added by hand. `install.sh` therefore creates a
+code-signing certificate on the user's Mac (its own keychain,
+`whisprgo-signing.keychain-db`) and signs every downloaded binary with it, so
+the grant survives upgrades. The published artifact stays ad hoc signed.
+
+CI proves that recipe: the `Sign with the installer's recipe` step runs
+`install.sh sign` against the fresh build on a throwaway keychain, asserts the
+designated requirement is identifier plus certificate and identical across two
+different binaries, and the smoke test runs the signed copy (Apple Silicon
+kills a binary with a bad signature). Change the signing code only together
+with that step.
+
 ## Code notes
 
 The latency budget after the key is released is the whole point of the
