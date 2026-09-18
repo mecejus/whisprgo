@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/install.sh | 
 
 Two dialogs appear on first launch: one asks for your Groq API key, then macOS asks for Accessibility access (required to see the Fn key). Click **Open System Settings** and turn whisprgo on. That is all: the service notices the grant and starts on its own, and the install command reports when it is ready.
 
-Upgrading? Run the same command. If macOS shows whisprgo already turned on in the Accessibility list but the installer keeps waiting, turn it off and on again: the grant is tied to the exact binary, so a new version needs a fresh one.
+Upgrading? Run the same command. The installer signs the binary with a certificate it creates on your Mac on the first install, so the Accessibility grant carries over between versions. The one exception is upgrading from a build older than that certificate: macOS then asks for access once more, and if whisprgo is still in the list you remove it with the minus button first.
 
 ## Usage
 

@@ -57,11 +57,41 @@ jobs:
           file whisprgo-darwin-arm64 | grep -q "arm64" || {
             echo "Built binary is not arm64" >&2; exit 1; }
 
+      - name: Sign with the installer's recipe
+        # install.sh signs the downloaded binary with a certificate it
+        # creates on the user's Mac, so the Accessibility grant survives
+        # upgrades. Run that exact code path here, on a throwaway keychain,
+        # and check the resulting signature is what TCC will key on: our
+        # identifier plus a certificate clause, identical across builds.
+        run: |
+          cp whisprgo-darwin-arm64 whisprgo-signed
+          sh install.sh sign whisprgo-signed
+          codesign --verify --verbose=2 whisprgo-signed
+          codesign -dv --verbose=2 whisprgo-signed 2>&1 | tee sig.txt
+          grep -q '^Identifier=com.whisprgo$' sig.txt
+          grep -q '^Authority=whisprgo-local$' sig.txt
+
+          dr=$(codesign -d -r- whisprgo-signed 2>&1 | grep '^designated')
+          echo "$dr"
+          echo "$dr" | grep -q 'identifier "com.whisprgo"'
+          echo "$dr" | grep -q 'certificate'
+
+          # A second, different binary signed by the same identity must get
+          # the same designated requirement: that is what makes upgrades keep
+          # the grant.
+          cp /bin/ls other-binary
+          sh install.sh sign other-binary
+          dr2=$(codesign -d -r- other-binary 2>&1 | grep '^designated')
+          [ "$dr" = "$dr2" ] || { echo "requirement differs: $dr2" >&2; exit 1; }
+
       - name: Smoke test
         # No TTY, no Accessibility grant and no microphone on the runner, so
         # the binary can't do real work here. What this does catch is a broken
         # dynamic link -- a missing framework or symbol from the cgo changes --
-        # which compiling alone does not.
+        # which compiling alone does not. It runs the copy the previous step
+        # signed: Apple Silicon kills a binary whose signature is invalid, so
+        # this is also the check that the signing recipe produces something
+        # that runs.
         #
         # Deliberately no `timeout`: macOS ships no such command, and the
         # resulting 127 made an earlier version of this step pass without ever
@@ -74,7 +104,7 @@ jobs:
           otool -L whisprgo-darwin-arm64
 
           echo "--- launching ---"
-          ./whisprgo-darwin-arm64 > smoke.log 2>&1 &
+          ./whisprgo-signed > smoke.log 2>&1 &
           pid=$!
           sleep 10
 
