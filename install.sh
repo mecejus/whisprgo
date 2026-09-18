@@ -135,11 +135,8 @@ sign_binary "$TMP/$BINARY"
 sudo mkdir -p "$INSTALL_DIR"
 sudo install -m 755 "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 
-if [ "$REGRANT" = 1 ]; then
-  # Drop the stale row so the prompt creates a fresh one for the signed
-  # binary. Best effort: tccutil may not accept a path for a non-app binary.
-  tccutil reset Accessibility "$INSTALL_DIR/$BINARY" >/dev/null 2>&1 || true
-fi
+# There is no scripted way to drop the stale Accessibility row: tccutil only
+# takes bundle identifiers, and the binary has none. The user removes it.
 
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$PLIST_DIR"

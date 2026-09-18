@@ -84,11 +84,6 @@ jobs:
           dr2=$(codesign -d -r- other-binary 2>&1 | grep '^designated')
           [ "$dr" = "$dr2" ] || { echo "requirement differs: $dr2" >&2; exit 1; }
 
-          # Informational: does tccutil accept a path for a non-app binary?
-          tccutil reset Accessibility /usr/local/bin/whisprgo \
-            && echo "tccutil accepted the path" \
-            || echo "tccutil rejected the path (exit $?)"
-
       - name: Smoke test
         # No TTY, no Accessibility grant and no microphone on the runner, so
         # the binary can't do real work here. What this does catch is a broken
