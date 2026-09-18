@@ -44,16 +44,22 @@ the remote. Restart it from `main` as described under Branch auto-deletion.
 
 ### You cannot compile this project in a cloud session
 
-The session runs on Linux. Every package except `config` and `groq` is cgo
-against CoreGraphics, AudioToolbox and ApplicationServices, so it builds
-**only** on macOS. Cross-compiling from here fails — there is no osxcross and
-no macOS SDK.
+The session runs on Linux. `main`, `keyboard`, `paste`, `dialog` and the
+recorder/player half of `audio` are cgo against CoreGraphics, AudioToolbox,
+AppKit and ApplicationServices, so they build **only** on macOS.
+Cross-compiling from here fails — there is no osxcross and no macOS SDK.
 
 What this means in practice:
 
 1. `gofmt -l .` works here. Use it before every push.
-2. `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./groq/ ./config/` also
-   works here and typechecks those two packages.
+2. `CGO_ENABLED=0 go test ./audio/ ./groq/ ./config/` works here and is the
+   real test loop: with cgo off the Apple-framework files drop out and the
+   pure-Go parts (the FLAC encoder, the capture buffer, the streaming API
+   client) build and test on Linux. `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0
+   go build ./groq/ ./config/ ./audio/` typechecks the same files for the
+   target. The FLAC round-trip tests decode with `afconvert` on macOS and the
+   reference `flac` tool elsewhere (`apt-get install flac`), and skip if
+   neither exists — install one so they run.
 3. Everything else is verified by pushing and reading CI. **CI is the
    compiler.** Expect to iterate through it; that is the normal workflow, not a
    failure.
@@ -132,13 +138,35 @@ a workflow input. The smoke test writes a dummy key to get past the prompt.
 
 ## Code notes
 
+The latency budget after the key is released is the whole point of the
+design. The audio is uploaded *while* the user speaks; the release sends only
+the last frame and waits for the API's answer, then pastes natively. Keep
+every step below off that path.
+
 - `keyboard/hook_darwin.go` — the event-tap callback must stay non-blocking. It
   pushes onto a channel and returns. Anything slow (network, subprocess, modal
   dialog) goes on a worker behind it, or macOS disables the tap.
 - `audio/recorder.go` — the AudioQueue is created once and reused. Do not go
-  back to creating and disposing it per keypress.
-- `audio/encode.go` — FLAC via AudioToolbox, WAV fallback. Keep it lossless;
-  the upload is on the user's critical path but transcription accuracy is not
-  worth trading for bytes.
-- `paste/paste_darwin.go` — the `LANG`/`LC_CTYPE` handling on `pbcopy` is
-  deliberate. Under launchd, without it, non-ASCII transcripts get mangled.
+  back to creating and disposing it per keypress. `Start` hands out a
+  `Capture` that consumers read while it is still filling.
+- `audio/capture.go` — the live sample buffer plus wake-ups. `StreamFLAC`
+  follows it and emits a frame every 256 ms; that is what the upload is
+  built on.
+- `audio/flac.go` — a pure-Go FLAC encoder (fixed predictors, Rice coding).
+  It exists because the upload streams frame by frame, which CoreAudio's
+  file-based encoder cannot do. Keep it lossless; transcription accuracy is
+  not worth trading for bytes. Never trust a change to it without the
+  external-decoder round-trip test passing.
+- `groq/client.go` — `Transcribe` streams the request body as the recording
+  is captured (no `Content-Length`; chunked on HTTP/1.1, DATA frames on
+  HTTP/2). If the API refuses that form it falls back to a buffered upload
+  and remembers to skip streaming for the rest of the process; a transport
+  hiccup falls back for that one dictation only. The live API cannot be
+  reached from CI or the cloud session, so that fallback is the safety net
+  for behaviour we cannot test here. `Warm` on key-down keeps a TLS
+  connection pooled.
+- `paste/paste_darwin.go` — the pasteboard is driven through NSPasteboard,
+  not `pbcopy`/`pbpaste`. Each of those was a process spawn on the paste
+  path, and pbcopy also needed a forced UTF-8 locale under launchd; NSString
+  round-trips UTF-8 losslessly on its own. Do not reintroduce subprocesses
+  here.
