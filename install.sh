@@ -71,6 +71,10 @@ cat > "$PLIST_PATH" <<PLIST
 </plist>
 PLIST
 
+# A leftover marker from an earlier wait would suppress the Accessibility
+# prompt on this launch.
+rm -f "$CONFIG_DIR/access-prompted"
+
 # The service appends to the log, so remember where this launch's output
 # starts: older runs have already printed the ready line.
 LOG_START=0
