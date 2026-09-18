@@ -1,46 +1,76 @@
 # Whispr Go
 
-A high performance macOS voice dictation service, free alternative to [Whispr Flow](https://wisprflow.ai).
+Talk instead of typing, anywhere on your Mac. Hold the **fn** key, say what you
+want, let go. The words appear where your cursor is.
 
-## Features
+It is free: transcription runs on [Groq](https://groq.com)'s free tier, and
+there is no account with us, no app window, no menu bar icon. One small
+program runs quietly in the background.
 
-- **Voice Dictation:** Hold Fn, speak, the transcription is pasted into the focused field instantly.
-- **Free & Fast:** Powered entirely by Groq's free-tier API for near-instant responses.
-- **Native Integration:** Single binary, minimal footprint, designed for macOS.
+## You need
 
-## Requirements
-
-- macOS on Apple Silicon (M1 or later)
-- A free [Groq API key](https://console.groq.com)
+- A Mac with Apple Silicon (M1 or newer), macOS 13 or newer
+- A free Groq API key: sign up at [console.groq.com](https://console.groq.com),
+  open **API Keys**, click **Create API Key**, and copy it
 
 ## Install
+
+Open **Terminal** (press `Cmd + Space`, type `Terminal`, press Enter), paste
+this line, and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/install.sh | sh
 ```
 
-Two dialogs appear on first launch: one asks for your Groq API key, then macOS asks for Accessibility access (required to see the Fn key). Click **Open System Settings** and turn whisprgo on. That is all: the service notices the grant and starts on its own, and the install command reports when it is ready.
+Then follow along. Three things happen:
 
-Upgrading? Run the same command. The installer signs the binary with a certificate it creates on your Mac on the first install, so the Accessibility grant carries over between versions. The one exception is upgrading from a build older than that certificate: macOS then asks for access once more, and if whisprgo is still in the list you remove it with the minus button first.
+1. **Your Mac asks for your password.** That is Terminal placing the program in
+   its folder. Type it and press Enter (nothing shows while you type).
+2. **A box asks for your Groq API key.** Paste it and click OK.
+3. **macOS asks about Accessibility.** Click **Open System Settings** and switch
+   **whisprgo** on. This is what lets it notice the fn key.
 
-## Usage
+The Terminal window says **All set** when it is ready. That is it: you never
+need to start whisprgo. It runs from now on, including after a restart.
 
-Hold **Fn** and speak — the transcription is pasted into the focused field the moment you release.
+## Use
 
-Optionally, disable the Fn key's default action: **System Settings → Keyboard → Press globe key to → Do Nothing**
+1. Click where you want the text to go (a message, a document, a search box).
+2. Hold **fn**, talk, let go.
+3. Your words appear.
 
-### Why it's fast
+Tip: if pressing fn opens the emoji picker, turn that off under
+**System Settings → Keyboard → Press 🌐 key to → Do Nothing**.
 
-The audio is compressed to FLAC and uploaded to Groq *while you are still
-talking*. Releasing Fn sends only the last fraction of a second, so what you
-wait for is the model's answer, not the upload — a long dictation costs no
-more at the end than a short one. The text then goes onto the pasteboard
-natively and Cmd+V is posted, with no helper processes in between. The log
-shows the release-to-paste time for every dictation.
+## Update
 
-## Configuration
+Paste the same install line again. Your key and settings stay. Nothing to
+switch on again.
 
-`~/.config/whisprgo/config.json` holds the API key and two optional keys:
+## Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/uninstall.sh | sh
+```
+
+This removes the program, your API key, and everything else it created. One
+thing a script cannot do: macOS may still list whisprgo under
+**System Settings → Privacy & Security → Accessibility**. Select it and press
+the minus (−) button. Leaving it is harmless.
+
+## If something is off
+
+- **Nothing happens when I hold fn.** Open **System Settings → Privacy &
+  Security → Accessibility** and check whisprgo is switched on. If it is on
+  and still nothing, switch it off, press the minus (−) button to remove it,
+  and run the install line again.
+- **I want to see what it is doing.** In Terminal:
+  `tail -f ~/.config/whisprgo/whisprgo.log`
+- **I want to change my key or the language.** See below.
+
+## Settings (optional)
+
+Your settings live in `~/.config/whisprgo/config.json`:
 
 ```json
 {
@@ -50,39 +80,36 @@ shows the release-to-paste time for every dictation.
 }
 ```
 
-- `model` — defaults to `whisper-large-v3`, the most accurate.
+- `model`: leave it out for `whisper-large-v3`, the most accurate.
   `whisper-large-v3-turbo` answers a little sooner at a small cost in accuracy.
-- `language` — an ISO-639-1 code. Naming your language lets the model skip
-  detecting it. Leave it out to auto-detect.
+- `language`: a two-letter code like `en`, `lt`, `de`. Naming your language
+  lets the model skip detecting it. Leave it out to auto-detect.
 
-Restart the service after editing:
+After editing, restart whisprgo:
 
 ```bash
 launchctl kickstart -k "gui/$(id -u)/com.whisprgo"
 ```
 
-## Uninstall
+## For developers
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mecejus/whisprgo/main/uninstall.sh | sh
-```
+### Why it is fast
 
-## Logs
+The audio is compressed to FLAC and uploaded to Groq *while you are still
+talking*. Releasing fn sends only the last fraction of a second, so what you
+wait for is the model's answer, not the upload. The text then goes onto the
+pasteboard natively and Cmd+V is posted, with no helper processes in between.
+The log shows the release-to-paste time for every dictation.
 
-```bash
-tail -f ~/.config/whisprgo/whisprgo.log
-```
-
-## Building
+### Building and releasing
 
 Releases are built on GitHub's Apple Silicon runners and published
-automatically on every push to `main` — see
+automatically on every merge to `main`; see
 [`.github/workflows/build.yml`](.github/workflows/build.yml). Nothing needs to
 be compiled locally. Every branch and pull request gets the same build, vet and
 smoke test, with the binary attached to the run as an artifact.
 
-To publish a release by hand:
-
-```bash
-./release.sh    # triggers the workflow; requires the gh CLI
-```
+The installer signs the downloaded binary with a certificate it creates on
+your Mac, so the Accessibility grant carries over between versions. CI runs
+that exact signing recipe against each build. The details are in
+[`AGENTS.md`](AGENTS.md).

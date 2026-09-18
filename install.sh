@@ -99,19 +99,17 @@ if [ "$1" = "sign" ]; then
   exit 0
 fi
 
-echo "Fetching latest release..."
+echo ""
+echo "Installing whisprgo..."
 TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
   "https://github.com/$REPO/releases/latest" | sed 's|.*/||')
 
 if [ -z "$TAG" ]; then
-  echo "Error: could not determine latest release" >&2
+  echo "Could not reach GitHub to download whisprgo. Check your internet connection and try again." >&2
   exit 1
 fi
 
-echo "Installing $BINARY $TAG..."
-
 if launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; then
-  echo "Stopping existing service..."
   launchctl bootout "gui/$(id -u)/$PLIST_LABEL" 2>/dev/null || true
 fi
 
@@ -130,8 +128,17 @@ if [ -f "$INSTALL_DIR/$BINARY" ] && \
   REGRANT=1
 fi
 
+# A fresh install has no API key yet, so the first launch asks for one.
+FIRST_RUN=0
+if [ ! -f "$CONFIG_DIR/config.json" ]; then
+  FIRST_RUN=1
+fi
+
 sign_binary "$TMP/$BINARY"
 
+if ! sudo -n true 2>/dev/null; then
+  echo "Your Mac will now ask for your password. That is to place whisprgo in $INSTALL_DIR."
+fi
 sudo mkdir -p "$INSTALL_DIR"
 sudo install -m 755 "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 
@@ -141,6 +148,9 @@ sudo install -m 755 "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$PLIST_DIR"
 
+# ThrottleInterval: while waiting for the Accessibility grant the service
+# exits and restarts on purpose (see main.go); launchd's default 10-second
+# restart throttle would make the grant take up to ten seconds to notice.
 cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -156,6 +166,8 @@ cat > "$PLIST_PATH" <<PLIST
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>1</integer>
     <key>StandardOutPath</key>
     <string>${LOG_FILE}</string>
     <key>StandardErrorPath</key>
@@ -178,23 +190,27 @@ fi
 launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 
 echo ""
-echo "whisprgo $TAG installed and started."
-echo ""
-if [ "$REGRANT" = 1 ]; then
-  echo "This version is signed, so future upgrades keep their Accessibility"
-  echo "grant. Getting there needs one more grant now:"
+if [ "$FIRST_RUN" = 1 ]; then
+  echo "Almost done. Two things will pop up on your screen:"
   echo ""
-  echo "  Accessibility: click \"Open System Settings\". If whisprgo is still"
-  echo "  listed, remove it with the minus button; then turn the new entry on."
+  echo "  1. A box asking for your Groq API key."
+  echo "     Get a free one at https://console.groq.com, paste it in, click OK."
+  echo ""
+  echo "  2. A macOS message about Accessibility."
+  echo "     Click \"Open System Settings\" and switch whisprgo on."
+  echo ""
+  echo "Waiting for you to do those... (you can leave this window open)"
+elif [ "$REGRANT" = 1 ]; then
+  echo "Almost done. macOS will ask for Accessibility access one more time."
+  echo "From this version on it stays granted across updates."
+  echo ""
+  echo "  Click \"Open System Settings\". If whisprgo is already in the list,"
+  echo "  select it and press the minus (-) button. Then switch whisprgo on."
+  echo ""
+  echo "Waiting for you to do that... (you can leave this window open)"
 else
-  echo "Two dialogs will appear on first launch:"
-  echo ""
-  echo "  1. Paste your Groq API key (free at https://console.groq.com)."
-  echo "  2. Accessibility: click \"Open System Settings\" and turn whisprgo on."
+  echo "Updated. Starting whisprgo..."
 fi
-echo ""
-echo "No restart needed: whisprgo starts by itself once access is granted."
-echo "Waiting for it... (Ctrl-C stops waiting; the service keeps running.)"
 
 # Poll this launch's log lines for the ready marker. The API key dialog is
 # the slow part, so allow ten minutes before giving up on the wait itself.
@@ -203,16 +219,14 @@ while [ "$waited" -lt 600 ]; do
   if [ -f "$LOG_FILE" ] && \
      tail -n +"$((LOG_START + 1))" "$LOG_FILE" | grep -q "whisprgo ready"; then
     echo ""
-    echo "whisprgo is ready. Hold [fn] and speak; release to paste."
+    echo "All set. Hold the fn key, talk, let go. Your words appear where you were typing."
     exit 0
   fi
-  sleep 2
-  waited=$((waited + 2))
+  sleep 1
+  waited=$((waited + 1))
 done
 
 echo ""
-echo "Still waiting for access. The service keeps trying; once whisprgo is"
-echo "turned on under System Settings > Privacy & Security > Accessibility"
-echo "it starts on its own."
-echo ""
-echo "Logs:  tail -f $LOG_FILE"
+echo "Still waiting, and that is fine. whisprgo keeps checking in the background"
+echo "and starts by itself as soon as you switch it on in System Settings."
+echo "You can close this window."
