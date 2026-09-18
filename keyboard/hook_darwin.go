@@ -69,7 +69,11 @@ static int promptForAccess() {
     return trusted ? 1 : 0;
 }
 
-static void runTap() {
+// createTap installs the tap on the calling thread's run loop. It must be
+// called on the thread that will then run runLoop, and returns 0 if the
+// system refused the tap -- which it does silently when this binary is not
+// trusted for Accessibility, so the caller must not assume a hotkey exists.
+static int createTap() {
     CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) |
                        CGEventMaskBit(kCGEventKeyDown)      |
                        CGEventMaskBit(kCGEventKeyUp);
@@ -82,11 +86,15 @@ static void runTap() {
         tapCallback,
         NULL
     );
-    if (!gTap) return;
+    if (!gTap) return 0;
 
     CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, gTap, 0);
     CFRunLoopAddSource(CFRunLoopGetCurrent(), src, kCFRunLoopCommonModes);
     CGEventTapEnable(gTap, true);
+    return 1;
+}
+
+static void runLoop() {
     CFRunLoopRun();
 }
 */
@@ -132,10 +140,29 @@ func PromptForAccess() bool {
 // still return promptly: they are serialized with each other, so slow work
 // (network, subprocesses, modal dialogs) belongs on a worker behind them.
 //
-// Returns an error if Accessibility access has not been granted.
+// Returns an error if Accessibility access has not been granted, or if the
+// system refused to create the event tap. It does not return until the tap
+// is installed, so a nil error means the hotkey is live.
 func Start(start, end func()) error {
 	if C.hasAccess() == 0 {
 		return fmt.Errorf("accessibility access required")
+	}
+
+	// The tap is bound to the run loop of the thread that creates it, so
+	// creation and the loop share one locked thread. Creation is reported
+	// back before the loop starts, which never returns.
+	created := make(chan bool, 1)
+	go func() {
+		runtime.LockOSThread()
+		ok := C.createTap() != 0
+		created <- ok
+		if !ok {
+			return
+		}
+		C.runLoop()
+	}()
+	if !<-created {
+		return fmt.Errorf("the system refused the keyboard event tap")
 	}
 
 	go func() {
@@ -146,11 +173,6 @@ func Start(start, end func()) error {
 				end()
 			}
 		}
-	}()
-
-	go func() {
-		runtime.LockOSThread()
-		C.runTap()
 	}()
 
 	return nil
