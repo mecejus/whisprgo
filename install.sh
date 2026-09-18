@@ -50,13 +50,18 @@ keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 basicConstraints = critical, CA:false
 CNF
-  openssl req -x509 -newkey rsa:2048 -nodes -days 7300 \
+  # Apple's own openssl (LibreSSL), by full path: a Homebrew OpenSSL 3 on
+  # PATH writes PKCS12 files that `security import` rejects ("MAC
+  # verification failed"). The legacy algorithms are spelled out for the
+  # same reason.
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 7300 \
     -config "$work/openssl.cnf" -extensions ext \
     -keyout "$work/key.pem" -out "$work/cert.pem" 2>/dev/null
-  openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" \
+  /usr/bin/openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" \
+    -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
     -out "$work/identity.p12" -passout pass:whisprgo -name "$SIGN_IDENTITY"
 
-  pw=$(openssl rand -hex 24)
+  pw=$(/usr/bin/openssl rand -hex 24)
   mkdir -p "$CONFIG_DIR"
   (umask 077 && printf '%s' "$pw" > "$KEYCHAIN_PW_FILE")
 
