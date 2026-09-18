@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -32,10 +33,17 @@ const (
 	queueDepth = 8
 
 	// How long to wait for the Accessibility grant before exiting so launchd
-	// can start a fresh process that asks again. launchd throttles restarts
-	// to one per ten seconds, so a shorter wait gains nothing.
-	accessRetryDelay = 10 * time.Second
+	// can start a fresh process that asks again. The wait ends early when
+	// macOS announces a grant change, so this is only the fallback cadence.
+	// install.sh sets the service's ThrottleInterval to match.
+	accessRetryDelay = 2 * time.Second
 )
+
+func init() {
+	// The Accessibility-change notification is delivered on the main
+	// thread's run loop, so main must stay on the main thread.
+	runtime.LockOSThread()
+}
 
 func fatal(message string) {
 	dialog.Error(message)
@@ -128,21 +136,18 @@ func main() {
 	// that was told "no" keeps hearing "no" for its whole life, however the
 	// toggle changes. Polling never flips and re-exec keeps the PID and the
 	// answer with it (both tried, both confirmed on a real Mac). Only a fresh
-	// process sees the grant. So show the system prompt once, then exit every
-	// few seconds and let launchd's KeepAlive start a fresh process to ask
-	// again. The marker file stops each fresh process re-firing the dialog.
-	// We deliberately do NOT raise our own dialog here: doing so steals focus
-	// from the System Settings window the prompt deeplinks to.
+	// process sees the grant. So show the system prompt once, then exit as
+	// soon as macOS announces a grant change (or after a short fallback) and
+	// let launchd's KeepAlive start a fresh process to ask again. The marker
+	// file stops each fresh process re-firing the dialog. We deliberately do
+	// NOT raise our own dialog here: doing so steals focus from the System
+	// Settings window the prompt deeplinks to.
 	if !keyboard.HasAccess() {
 		if config.MarkAccessPrompted() {
 			keyboard.PromptForAccess()
-			fmt.Fprintln(os.Stderr, "Waiting for Accessibility access: in System Settings > Privacy & Security > Accessibility, turn whisprgo on. (Already on? Turn it off and on again.) whisprgo starts by itself within seconds of the grant.")
+			fmt.Fprintln(os.Stderr, "Waiting for you to switch whisprgo on under System Settings > Privacy & Security > Accessibility. It starts by itself once you do. (Running whisprgo by hand instead of as the service? Run it again after switching it on.)")
 		}
-		select {
-		case <-sig:
-		case <-time.After(accessRetryDelay):
-			fmt.Fprintln(os.Stderr, "Accessibility not granted yet; restarting to check again. (Started by hand rather than launchd? Run whisprgo again once access is granted.)")
-		}
+		keyboard.WaitForAccessChange(accessRetryDelay)
 		return
 	}
 	config.ClearAccessPrompted()

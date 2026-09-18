@@ -6,6 +6,7 @@ package keyboard
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <unistd.h>
 
 void goFnState(int pressed);
 
@@ -97,11 +98,45 @@ static int createTap() {
 static void runLoop() {
     CFRunLoopRun();
 }
+
+// macOS posts this distributed notification whenever an Accessibility grant
+// changes, for any app. It carries no payload; it is a wake-up call.
+#define WHISPR_AX_CHANGED CFSTR("com.apple.accessibility.api")
+
+static void accessChanged(CFNotificationCenterRef center, void *observer,
+                          CFStringRef name, const void *object,
+                          CFDictionaryRef userInfo) {
+    CFRunLoopStop(CFRunLoopGetCurrent());
+}
+
+// waitForAccessChange returns when the grant notification arrives or after
+// timeout seconds, whichever is first. Must run on the thread whose run loop
+// the distributed center delivers to, which is the main thread.
+static void waitForAccessChange(double timeout) {
+    CFNotificationCenterRef center = CFNotificationCenterGetDistributedCenter();
+    CFNotificationCenterAddObserver(center, NULL, accessChanged, WHISPR_AX_CHANGED,
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + timeout;
+    for (;;) {
+        double left = deadline - CFAbsoluteTimeGetCurrent();
+        if (left <= 0) break;
+        SInt32 r = CFRunLoopRunInMode(kCFRunLoopDefaultMode, left, false);
+        if (r == kCFRunLoopRunStopped) break;
+        if (r == kCFRunLoopRunFinished) {
+            // No sources on this run loop, so the notification cannot be
+            // delivered here; fall back to the plain timeout.
+            usleep((useconds_t)(left * 1e6));
+            break;
+        }
+    }
+    CFNotificationCenterRemoveObserver(center, NULL, WHISPR_AX_CHANGED, NULL);
+}
 */
 import "C"
 import (
 	"fmt"
 	"runtime"
+	"time"
 )
 
 // events carries fn transitions from the event-tap thread to the dispatch
@@ -131,6 +166,13 @@ func HasAccess() bool {
 // System Settings pane. Returns true if access is already granted.
 func PromptForAccess() bool {
 	return C.promptForAccess() != 0
+}
+
+// WaitForAccessChange blocks until macOS announces a change to Accessibility
+// grants or timeout passes, whichever comes first. It must be called from the
+// main goroutine locked to the main thread.
+func WaitForAccessChange(timeout time.Duration) {
+	C.waitForAccessChange(C.double(timeout.Seconds()))
 }
 
 // Start registers fn-key callbacks and begins listening. onStart fires the
