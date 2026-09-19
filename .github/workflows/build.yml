@@ -144,8 +144,123 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  build-windows:
+    # The Windows half is pure Go — no cgo, so nothing here needs a C
+    # toolchain and both architectures cross-compile from one runner. What
+    # this job is really for is typechecking: the darwin and windows files
+    # are mutually exclusive by build tag, so the macOS job above never
+    # compiles a line of the code below, and this one never compiles a line
+    # of the code above.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # gofmt is not repeated here: it ignores build tags, so the macOS job's
+      # `gofmt -l .` already covers every file in the repository.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        # The FLAC round-trip tests look for an external decoder and skip
+        # when there is none; the macOS job runs them against afconvert.
+        run: go test ./... -v
+
+      - name: Build
+        run: |
+          $env:CGO_ENABLED = '0'
+          $env:GOARCH = 'amd64'
+          go build -trimpath -ldflags="-s -w" -o whisprgo-windows-amd64.exe .
+          $env:GOARCH = 'arm64'
+          go build -trimpath -ldflags="-s -w" -o whisprgo-windows-arm64.exe .
+          Get-ChildItem whisprgo-windows-*.exe | Format-Table Name, Length
+
+      - name: Check the installer scripts parse
+        # install.ps1 is the one part of this that cannot be compiled, and a
+        # syntax error in it would only show up on a user's PC. PowerShell's
+        # own parser settles it here instead.
+        run: |
+          $failed = $false
+          foreach ($file in 'install.ps1', 'uninstall.ps1') {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "$file has $($errors.Count) parse error(s):"
+              $errors | ForEach-Object { Write-Host "  $_" }
+              $failed = $true
+            } else {
+              Write-Host "$file parses cleanly"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Smoke test
+        # Windows asks for no Accessibility grant, so unlike the macOS smoke
+        # test this one gets all the way to the ready line: config, WASAPI
+        # setup, the chime files, and the low-level keyboard hook all have to
+        # work for it to print. The runner has no microphone, which is the
+        # one thing that is allowed to fail — Prime reports it and carries on,
+        # exactly as it does at a user's login before the device enumerates.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $cfg = Join-Path $env:USERPROFILE '.config\whisprgo'
+          New-Item -ItemType Directory -Force -Path $cfg | Out-Null
+          '{"api_key":"ci-smoke-test"}' | Set-Content -Path (Join-Path $cfg 'config.json') -Encoding ascii
+
+          Write-Host '--- launching ---'
+          $proc = Start-Process -FilePath .\whisprgo-windows-amd64.exe `
+            -RedirectStandardOutput smoke.out -RedirectStandardError smoke.err -PassThru
+          Start-Sleep -Seconds 10
+
+          $exited = $null
+          if ($proc.HasExited) {
+            $exited = $proc.ExitCode
+            Write-Host "exited early with code $exited"
+          } else {
+            Write-Host 'still alive after 10s (expected: parked on the hotkey)'
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          Write-Host '--- stdout ---'
+          $stdoutText = if (Test-Path smoke.out) { Get-Content smoke.out -Raw } else { '' }
+          Write-Host $stdoutText
+          Write-Host '--- stderr ---'
+          # Not $err: PowerShell variable names are case-insensitive, so that
+          # would overwrite the automatic $Error collection.
+          $stderrText = if (Test-Path smoke.err) { Get-Content smoke.err -Raw } else { '' }
+          Write-Host $stderrText
+
+          $all = "$stdoutText`n$stderrText"
+          if ($all -match 'panic:|fatal error:|Exception 0x|runtime: ') {
+            Write-Host 'Binary failed to start cleanly'
+            exit 1
+          }
+          if ($null -ne $exited) {
+            Write-Host "Expected the binary to still be running, but it exited with $exited"
+            exit 1
+          }
+          if ($all -notmatch 'whisprgo ready') {
+            Write-Host 'Binary never reported ready'
+            exit 1
+          }
+          Write-Host 'Smoke test passed.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisprgo-windows
+          path: whisprgo-windows-*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   release:
-    needs: build
+    needs: [build, build-windows]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -156,6 +271,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: whisprgo-darwin-arm64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisprgo-windows
 
       - name: Publish rolling release
         env:
@@ -169,7 +288,10 @@ jobs:
           gh release delete rolling-release --yes --cleanup-tag || true
 
           for attempt in 1 2 3; do
-            if gh release create rolling-release whisprgo-darwin-arm64 \
+            if gh release create rolling-release \
+                 whisprgo-darwin-arm64 \
+                 whisprgo-windows-amd64.exe \
+                 whisprgo-windows-arm64.exe \
                  --title "Whispr Go" \
                  --target "$GITHUB_SHA" \
                  --notes "Built from commit \`$short\`."; then

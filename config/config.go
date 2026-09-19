@@ -18,6 +18,24 @@ type Config struct {
 	// Language is an optional ISO-639-1 hint such as "en". Naming the language
 	// lets the model skip detecting it. Empty means auto-detect.
 	Language string `json:"language,omitempty"`
+
+	// HoldKey names the push-to-talk key on Windows: "ctrl+win" (the
+	// default), or a single key such as "capslock" or "f13". It is ignored
+	// on macOS, where the key is always fn — and Windows has no fn to use,
+	// because on nearly all laptops it never reaches the OS at all.
+	HoldKey string `json:"hold_key,omitempty"`
+
+	// PassThroughHoldKey leaves a single-key hold key visible to whatever
+	// app is in front. Such a key is swallowed by default so holding it to
+	// dictate cannot disturb anything; a combination is never swallowed, so
+	// this does nothing for one. Windows only.
+	PassThroughHoldKey bool `json:"pass_through_hold_key,omitempty"`
+}
+
+// Dir is the folder holding the config file, and anything else whisprgo
+// keeps per-user. Uninstalling removes the whole folder.
+func Dir() string {
+	return filepath.Dir(configPath())
 }
 
 func configPath() string {
