@@ -3,7 +3,7 @@
 Hold-a-key voice dictation. One Go module, two binaries:
 
 - **macOS** — hold fn. cgo against Apple frameworks, run as a launchd agent.
-- **Windows** — hold right ctrl. Pure Go against Win32, run from the per-user
+- **Windows** — hold ctrl + win. Pure Go against Win32, run from the per-user
   Run key.
 
 The platform-neutral half (the FLAC encoder, the capture buffer, the streaming
@@ -245,11 +245,32 @@ every step below off that path.
   rule as the macOS event tap and a harsher penalty: exceed
   `LowLevelHooksTimeout` and Windows silently stops calling you for later
   events, with no notification and no disabled-tap callback to re-enable from.
-  It pushes onto a channel and returns.
-  The hook swallows the hold key by default. That is why it must ignore its
-  own `SendInput` events by `dwExtraInfo`: without that, the ctrl posted by
-  `paste` reads as the user reaching for the hold key and starts a recording
-  on every paste.
+  It holds no state at all — it classifies the event, pushes onto a channel
+  and returns.
+  It must ignore its own `SendInput` events by `dwExtraInfo`: without that,
+  the ctrl posted by `paste` reads as the user reaching for the hold key and
+  starts a recording on every paste.
+  `maskWin` is not optional. The default hold key is ctrl+win, and Windows
+  opens the Start menu when the Windows key is released with no other key
+  having gone down while it was held — which is exactly the shape of holding
+  ctrl+win, since ctrl goes down *before* win. One keystroke of a virtual-key
+  code nothing maps makes the shell see an ordinary combination instead. It
+  runs on the dispatch goroutine, never inside the hook: injecting input from
+  a low-level hook callback re-enters that hook on the thread Windows is
+  already timing.
+  The watchdog is not optional either. Ctrl+Win+L locks the workstation
+  mid-combination and the key-ups land on the secure desktop, never reaching
+  us; without a resync against `GetAsyncKeyState` the state machine would sit
+  believing the keys are still held and record until the capture cap stopped
+  it.
+- `keyboard/holdkey.go` — parses `"ctrl+win"` into something the hook can test
+  cheaply, plus the state machine that decides when a combination is complete.
+  Deliberately **not** behind a build tag: it is the most intricate logic in
+  the Windows half (order independence, either-side modifiers, auto-repeat,
+  two equivalent keys held at once) and untagged it is tested on every
+  platform rather than only on a Windows runner. The macOS binary never
+  references it, so the linker drops it. Only a single-key hold key is ever
+  swallowed — eating half a combination is how a modifier gets stuck on.
 - `audio/recorder_windows.go` — WASAPI shared mode, event-driven. Initialized
   once and then started and stopped per dictation, same as the AudioQueue:
   `IAudioClient::Start` is also what lights Windows' microphone indicator, so

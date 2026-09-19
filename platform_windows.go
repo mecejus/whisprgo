@@ -28,9 +28,10 @@ var (
 )
 
 // holdKeyName is a var here, unlike the constant on macOS, because the key is
-// configurable: there is no Windows key as reliably meaningless as fn, so the
-// default has to be overridable.
-var holdKeyName = "right ctrl"
+// configurable: there is no single Windows key as reliably meaningless as fn,
+// so the default is a combination and has to be overridable. init resets this
+// once config.json has been read.
+var holdKeyName = keyboard.HoldKeyName()
 
 const (
 	swHide = 0

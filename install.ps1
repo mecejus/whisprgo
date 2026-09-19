@@ -130,7 +130,7 @@ for ($ticks = 0; $ticks -lt 2400; $ticks++) {
 
 Write-Host "`r$(' ' * 70)`r" -NoNewline
 if ($ready) {
-  Write-Host 'All set. Hold the right ctrl key, talk, let go. Your words appear where you were typing.'
+  Write-Host 'All set. Hold ctrl and the Windows key together, talk, let go. Your words appear where you were typing.'
   Write-Host ''
   Write-Host 'To watch it work, run it in a terminal instead:'
   Write-Host "  & `"$exePath`""

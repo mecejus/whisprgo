@@ -5,7 +5,6 @@ package keyboard
 import (
 	"fmt"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -40,6 +39,10 @@ const (
 	wmSysKeyUp   = 0x0105
 
 	hcAction = 0
+
+	// How often the watchdog checks that keys it believes are held really
+	// are. See watchdog.
+	resyncInterval = 400 * time.Millisecond
 )
 
 // kbdllhookstruct is the KBDLLHOOKSTRUCT the hook receives. It is owned by
@@ -70,170 +73,61 @@ var (
 	setWindowsHookExW = win.Proc("user32.dll", "SetWindowsHookExW")
 	callNextHookEx    = win.Proc("user32.dll", "CallNextHookEx")
 	getMessageW       = win.Proc("user32.dll", "GetMessageW")
+	getAsyncKeyState  = win.Proc("user32.dll", "GetAsyncKeyState")
 	getModuleHandleW  = win.Proc("kernel32.dll", "GetModuleHandleW")
 )
 
-// events carries hold-key transitions from the hook thread to the dispatch
-// goroutine. Buffered so the hook never waits on a consumer: Windows gives a
-// low-level hook a few hundred milliseconds (LowLevelHooksTimeout) to return
-// before it starts silently skipping it for later events, and a skipped
-// key-up would leave whisprgo recording forever.
-var events = make(chan bool, 64)
-
-// holdKey is the virtual-key code of the push-to-talk key, and swallow says
-// whether the hook eats it.
-//
-// Atomics rather than a mutex: these are read on the hook thread for every
-// keystroke that happens anywhere in the session, and that thread is the one
-// Windows is timing. An uncontended lock would be cheap, but nothing here
-// needs the two values to change together, so there is no reason to put a
-// lock on that path at all.
-var (
-	holdKey atomic.Uint32
-	swallow atomic.Bool
-)
+// spec is the parsed hold key. Swapped whole by Configure and only read after
+// that, so the hook thread never takes a lock to consult it.
+var spec atomic.Pointer[holdSpec]
 
 func init() {
-	holdKey.Store(vkRControl)
-	swallow.Store(true)
-}
-
-// Virtual-key codes. A low-level hook reports the side-distinguished codes
-// (VK_RCONTROL rather than VK_CONTROL), which is what makes a right-hand-only
-// hold key possible at all.
-const (
-	vkLControl = 0xA2
-	vkRControl = 0xA3
-	vkLShift   = 0xA0
-	vkRShift   = 0xA1
-	vkLMenu    = 0xA4
-	vkRMenu    = 0xA5
-	vkRWin     = 0x5C
-	vkApps     = 0x5D
-	vkCapital  = 0x14
-	vkPause    = 0x13
-	vkScroll   = 0x91
-	vkF13      = 0x7C
-)
-
-// holdKeys maps the names accepted in config.json to virtual-key codes.
-//
-// The default is right ctrl: it is on essentially every keyboard, does
-// nothing on its own, and — unlike right alt, which is AltGr on non-US
-// layouts — carries no second meaning. There is no fn key to use here; on
-// nearly all laptops fn is handled in keyboard firmware and never reaches
-// the OS at all.
-var holdKeys = map[string]uint32{
-	"rightctrl":  vkRControl,
-	"rctrl":      vkRControl,
-	"leftctrl":   vkLControl,
-	"lctrl":      vkLControl,
-	"rightshift": vkRShift,
-	"rshift":     vkRShift,
-	"leftshift":  vkLShift,
-	"lshift":     vkLShift,
-	"rightalt":   vkRMenu,
-	"ralt":       vkRMenu,
-	"leftalt":    vkLMenu,
-	"lalt":       vkLMenu,
-	"rightwin":   vkRWin,
-	"rwin":       vkRWin,
-	"menu":       vkApps,
-	"apps":       vkApps,
-	"capslock":   vkCapital,
-	"pause":      vkPause,
-	"scrolllock": vkScroll,
-}
-
-func init() {
-	for i := 0; i < 12; i++ {
-		holdKeys[fmt.Sprintf("f%d", 13+i)] = uint32(vkF13 + i)
+	s, err := parseHoldSpec(DefaultHoldKey, false)
+	if err != nil {
+		panic("whisprgo: the built-in default hold key does not parse: " + err.Error())
 	}
+	spec.Store(s)
 }
 
 // Configure selects the push-to-talk key and whether the hook hides it from
 // the rest of the system. It must be called before Start.
 //
-// name is a key from holdKeys; empty means the default. passThrough leaves
-// the key visible to the focused application, which matters if you also use
-// that key for shortcuts: with the default (swallowed) right ctrl, a
-// right-handed Ctrl+C types a bare "c" instead of copying.
+// name is one or more key names joined by "+", such as "ctrl+win" or
+// "capslock". passThrough only applies to a single-key hold key, which is
+// swallowed by default so that holding it to dictate cannot disturb whatever
+// is in front; a combination is never swallowed.
 //
-// An unrecognised name is an error, and the caller is expected to keep the
-// default rather than start with no hotkey.
+// An unrecognised name is an error and leaves the previous setting in place,
+// so a typo in config.json costs the user their preference, not their hotkey.
 func Configure(name string, passThrough bool) error {
-	swallow.Store(!passThrough)
-	if strings.TrimSpace(name) == "" {
-		holdKey.Store(vkRControl)
-		return nil
+	if name == "" {
+		name = DefaultHoldKey
 	}
-	vk, ok := holdKeys[strings.ToLower(strings.TrimSpace(name))]
-	if !ok {
-		return fmt.Errorf("unknown hold key %q", name)
+	s, err := parseHoldSpec(name, passThrough)
+	if err != nil {
+		return err
 	}
-	holdKey.Store(vk)
+	spec.Store(s)
 	return nil
 }
 
-// HoldKeyName returns the configured key's name, for the ready line.
-func HoldKeyName() string {
-	vk := holdKey.Load()
-	switch vk {
-	case vkRControl:
-		return "right ctrl"
-	case vkLControl:
-		return "left ctrl"
-	case vkRShift:
-		return "right shift"
-	case vkLShift:
-		return "left shift"
-	case vkRMenu:
-		return "right alt"
-	case vkLMenu:
-		return "left alt"
-	case vkRWin:
-		return "right win"
-	case vkApps:
-		return "menu"
-	case vkCapital:
-		return "caps lock"
-	case vkPause:
-		return "pause"
-	case vkScroll:
-		return "scroll lock"
-	}
-	if vk >= vkF13 && vk < vkF13+12 {
-		return fmt.Sprintf("F%d", 13+vk-vkF13)
-	}
-	return "hold key"
-}
+// HoldKeyName returns the configured combination's name, for the ready line.
+func HoldKeyName() string { return spec.Load().display }
 
-// keyWasDown dedupes: Windows repeats WM_KEYDOWN while a key is held, and
-// only the transitions are dictation boundaries. Touched only on the hook
-// thread.
-var keyWasDown bool
-
-func setKeyState(down bool) {
-	if down == keyWasDown {
-		return
-	}
-	keyWasDown = down
-	select {
-	case events <- down:
-	default:
-		// Unreachable in practice — the consumer only starts and stops the
-		// recorder, which takes microseconds. Dropping beats blocking on the
-		// one thread Windows is timing.
-	}
-}
+// events carries those transitions. Buffered so the hook never waits on a
+// consumer: Windows gives a low-level hook a few hundred milliseconds
+// (LowLevelHooksTimeout) to return before it starts silently skipping it for
+// later events, and a skipped key-up would leave whisprgo recording.
+var events = make(chan keyChange, 64)
 
 // hookCallback is created once: every syscall.NewCallback consumes a slot
 // from a process-wide table that is never reclaimed.
 var hookCallback = syscall.NewCallback(hookProc)
 
-// hookProc runs on the hook thread for every keystroke in the session, so it
-// stays allocation-free and does nothing but classify the event and hand it
-// to a channel.
+// hookProc runs on the hook thread for every keystroke in the session. It
+// holds no state and makes no decision that needs any: it classifies the
+// event, hands it to a channel and returns. Everything about whether a
+// combination is complete is worked out on the goroutine behind it.
 //
 // lParam is typed as a pointer rather than a uintptr so no uintptr-to-pointer
 // conversion is needed to read it; that conversion is the one go vet
@@ -245,28 +139,41 @@ func hookProc(nCode uintptr, wParam uintptr, lParam *kbdllhookstruct) uintptr {
 		return callNext(nCode, wParam, lParam)
 	}
 
-	// Our own Ctrl+V, on its way to paste a transcript. Without this the
-	// hook would see the ctrl it just synthesised and start a recording.
+	// Our own injected keystrokes — the Ctrl+V that pastes a transcript, and
+	// the keystroke that masks the Start menu. Without this the hook would
+	// read the ctrl it just synthesised as the user reaching for the hold
+	// key and start a recording on every paste.
 	if lParam.dwExtraInfo == win.InjectedTag {
 		return callNext(nCode, wParam, lParam)
 	}
 
-	if lParam.vkCode != holdKey.Load() {
+	s := spec.Load()
+	if _, _, ok := s.matches(lParam.vkCode); !ok {
 		return callNext(nCode, wParam, lParam)
 	}
 
+	var down bool
 	switch wParam {
 	case wmKeyDown, wmSysKeyDown:
-		setKeyState(true)
+		down = true
 	case wmKeyUp, wmSysKeyUp:
-		setKeyState(false)
+		down = false
 	default:
 		return callNext(nCode, wParam, lParam)
 	}
 
-	if swallow.Load() {
-		// Non-zero swallows the key: the focused application never sees it,
-		// so holding it to dictate cannot disturb whatever is in front.
+	select {
+	case events <- keyChange{vk: lParam.vkCode, down: down}:
+	default:
+		// Unreachable in practice — the consumer only starts and stops the
+		// recorder, which takes microseconds. Dropping beats blocking on the
+		// one thread Windows is timing.
+	}
+
+	if s.swallow {
+		// Non-zero hides the key: the focused application never sees it, so
+		// holding it to dictate cannot disturb whatever is in front. Only
+		// ever set for a single-key hold key.
 		return 1
 	}
 	return callNext(nCode, wParam, lParam)
@@ -277,8 +184,43 @@ func callNext(nCode, wParam uintptr, lParam *kbdllhookstruct) uintptr {
 	return r
 }
 
+// maskWin defeats the Start menu. Windows opens it when the Windows key is
+// released without any other key having been pressed while it was down — and
+// holding ctrl+win to dictate is exactly that, since ctrl goes down before
+// win rather than during. One keystroke of a virtual-key code nothing maps
+// makes the shell see an ordinary combination instead, so letting go to hear
+// the transcript does not also throw the Start menu over it.
+//
+// This runs here, on the dispatch goroutine, and never inside the hook
+// itself: injecting input from a low-level hook callback re-enters the same
+// hook on the thread Windows is already timing.
+func maskWin() {
+	if err := win.SendKeys(win.Tap(vkNoName)...); err != nil {
+		fmt.Printf("\r\033[KCould not suppress the Start menu: %v\n", err)
+	}
+}
+
+// physicallyHeld asks the OS what is really down, rather than what our
+// bookkeeping believes.
+func physicallyHeld(s *holdSpec) bool {
+	for p := 0; p < s.n; p++ {
+		any := false
+		for _, vk := range s.parts[p] {
+			if r, _, _ := getAsyncKeyState.Call(uintptr(vk)); r&0x8000 != 0 {
+				any = true
+				break
+			}
+		}
+		if !any {
+			return false
+		}
+	}
+	return true
+}
+
 // Start registers the hold-key callbacks and begins listening. onStart fires
-// the moment the key goes down; onEnd fires when it is released.
+// the moment the combination is complete; onEnd fires when any part of it is
+// released.
 //
 // Both run on a dedicated goroutine, never on the hook thread, and must still
 // return promptly: they are serialized with each other, so slow work
@@ -317,15 +259,47 @@ func Start(start, end func()) error {
 		return err
 	}
 
-	go func() {
-		for pressed := range events {
-			if pressed {
+	go dispatch(start, end)
+	return nil
+}
+
+func dispatch(start, end func()) {
+	var t tracker
+	resync := time.NewTicker(resyncInterval)
+	defer resync.Stop()
+
+	for {
+		select {
+		case c := <-events:
+			s := spec.Load()
+			if !t.apply(s, c) {
+				continue
+			}
+			if t.active {
+				if s.masksWin {
+					maskWin()
+				}
 				start()
 			} else {
 				end()
 			}
-		}
-	}()
 
-	return nil
+		case <-resync.C:
+			// A key-up can go missing: Ctrl+Win+L switches to the secure
+			// desktop mid-combination, and a hook that overruns its timeout
+			// is skipped for events it never learns it missed. Either way
+			// the state machine would sit believing the key is still down
+			// and record until the capture length cap stopped it. Ask the OS
+			// what is actually held instead of waiting for an edge that has
+			// already been and gone.
+			if !t.active {
+				continue
+			}
+			if physicallyHeld(spec.Load()) {
+				continue
+			}
+			t.reset()
+			end()
+		}
+	}
 }

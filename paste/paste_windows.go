@@ -25,9 +25,6 @@ const (
 	cfUnicodeText = 13
 	gmemMoveable  = 0x0002
 
-	inputKeyboard  = 1
-	keyEventFKeyUp = 0x0002
-
 	vkControl = 0x11
 	vkV       = 0x56
 
@@ -63,29 +60,6 @@ var (
 	// materialises a Go pointer to foreign memory at all.
 	rtlMoveMemory = win.Proc("kernel32.dll", "RtlMoveMemory")
 )
-
-// keybdInput is KEYBDINPUT and input is INPUT, laid out for 64-bit Windows.
-// INPUT is a union whose largest member is MOUSEINPUT at 32 bytes, so the
-// keyboard variant is padded out to match.
-type keybdInput struct {
-	wVk         uint16
-	wScan       uint16
-	dwFlags     uint32
-	time        uint32
-	dwExtraInfo uintptr
-}
-
-type input struct {
-	typ uint32
-	_   uint32
-	ki  keybdInput
-	_   [8]byte
-}
-
-// SendInput rejects the whole call if cbSize is not exactly the size it
-// expects, and does so at runtime with no useful error. Catch a layout
-// mistake here instead: the index is out of range unless INPUT is 40 bytes.
-var _ = [1]struct{}{}[unsafe.Sizeof(input{})-40]
 
 // Paste writes text to the clipboard and issues Ctrl+V to paste it into the
 // focused field. A trailing space is appended so consecutive dictations don't
@@ -212,28 +186,18 @@ func writeClipboard(s string) error {
 	})
 }
 
-// postCtrlV synthesises the paste keystroke. Every event carries
-// win.InjectedTag in dwExtraInfo so whisprgo's own keyboard hook recognises
-// it and passes it straight through — without that, the ctrl we send here
-// would look exactly like the user reaching for the hold key and would start
-// a recording on every paste.
+// postCtrlV synthesises the paste keystroke. win.SendKeys tags every event
+// with the whisprgo signature, so the keyboard hook recognises this ctrl as
+// its own and passes it through — without that, the paste would look exactly
+// like the user reaching for the hold key and would start a recording.
 func postCtrlV() error {
-	events := [...]input{
-		{typ: inputKeyboard, ki: keybdInput{wVk: vkControl, dwExtraInfo: win.InjectedTag}},
-		{typ: inputKeyboard, ki: keybdInput{wVk: vkV, dwExtraInfo: win.InjectedTag}},
-		{typ: inputKeyboard, ki: keybdInput{wVk: vkV, dwFlags: keyEventFKeyUp, dwExtraInfo: win.InjectedTag}},
-		{typ: inputKeyboard, ki: keybdInput{wVk: vkControl, dwFlags: keyEventFKeyUp, dwExtraInfo: win.InjectedTag}},
-	}
-	n, _, err := sendInput.Call(
-		uintptr(len(events)),
-		uintptr(unsafe.Pointer(&events[0])),
-		unsafe.Sizeof(events[0]),
-	)
-	// LazyProc.Call passes its arguments through a slice, so the compiler's
-	// syscall keep-alive rule does not cover this array. Say it explicitly.
-	runtime.KeepAlive(&events)
-	if int(n) != len(events) {
-		return fmt.Errorf("could not post Ctrl+V keystroke: %v", err)
+	if err := win.SendKeys(
+		win.Down(vkControl),
+		win.Down(vkV),
+		win.Up(vkV),
+		win.Up(vkControl),
+	); err != nil {
+		return fmt.Errorf("could not post Ctrl+V keystroke: %w", err)
 	}
 	return nil
 }
