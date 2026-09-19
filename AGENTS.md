@@ -1,7 +1,14 @@
 # whisprgo
 
-Hold-fn voice dictation for macOS. A single Go binary, cgo against Apple
-frameworks, run as a launchd agent.
+Hold-a-key voice dictation. One Go module, two binaries:
+
+- **macOS** — hold fn. cgo against Apple frameworks, run as a launchd agent.
+- **Windows** — hold right ctrl. Pure Go against Win32, run from the per-user
+  Run key.
+
+The platform-neutral half (the FLAC encoder, the capture buffer, the streaming
+Groq client, config) is shared; `keyboard`, `paste`, `dialog` and the
+recorder/player halves of `audio` are split by build tag.
 
 ## Output style
 
@@ -42,12 +49,29 @@ Squash-merge unless the branch's individual commits are worth keeping.
 After the merge, do not keep working on the old branch — it no longer exists on
 the remote. Restart it from `main` as described under Branch auto-deletion.
 
-### You cannot compile this project in a cloud session
+### You cannot compile the macOS build in a cloud session. You can compile the Windows one.
 
-The session runs on Linux. `main`, `keyboard`, `paste`, `dialog` and the
-recorder/player half of `audio` are cgo against CoreGraphics, AudioToolbox,
-AppKit and ApplicationServices, so they build **only** on macOS.
-Cross-compiling from here fails — there is no osxcross and no macOS SDK.
+The session runs on Linux. The darwin files in `main`, `keyboard`, `paste`,
+`dialog` and `audio` are cgo against CoreGraphics, AudioToolbox, AppKit and
+ApplicationServices, so they build **only** on macOS. Cross-compiling them
+from here fails — there is no osxcross and no macOS SDK.
+
+The Windows files have no cgo at all. They reach Win32 through
+`syscall.LazyProc` and COM through hand-written vtable structs, which is a
+deliberate constraint, not an accident: it is what makes the whole Windows
+binary buildable and vettable from here.
+
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/w.exe .
+    GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/w-arm.exe .
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
+
+Run all three before pushing a Windows change. `go vet` matters more here than
+usual: its `unsafeptr` check is what catches a uintptr from a syscall being
+turned back into a pointer, which is the classic way to write a Win32 binding
+that works until the GC moves under it.
+
+Keep it that way. Reaching for cgo on the Windows side would cost the one
+thing that makes this half of the project practical to develop here.
 
 What this means in practice:
 
@@ -61,10 +85,22 @@ What this means in practice:
    reference `flac` tool elsewhere (`apt-get install flac`), and skip if
    neither exists — install one so they run.
 3. Everything else is verified by pushing and reading CI. **CI is the
-   compiler.** Expect to iterate through it; that is the normal workflow, not a
-   failure.
+   compiler** for the macOS half. Expect to iterate through it; that is the
+   normal workflow, not a failure.
+4. What no CI can check on either platform: the keyboard hook actually firing,
+   a real microphone, and the paste landing in a real app. GitHub's Windows
+   runners have no microphone, so `Prime` failing there is expected and
+   non-fatal. Those need a real Mac and a real PC.
 
-Do not claim code compiles until a run says so.
+Do not claim macOS code compiles until a run says so.
+
+### PowerShell is not compiled, so CI parses it
+
+`install.ps1` and `uninstall.ps1` cannot be checked here — the session has no
+PowerShell. The Windows CI job runs both through
+`[System.Management.Automation.Language.Parser]::ParseFile`, which catches a
+syntax error that would otherwise only surface on a user's PC. Do not weaken
+that step.
 
 ### Branch auto-deletion
 
@@ -90,16 +126,23 @@ One workflow, `.github/workflows/build.yml`:
 | Job | Runs on | Fires on |
 |---|---|---|
 | `build` | `macos-latest` (Apple Silicon) | every branch push, every PR, `workflow_dispatch` |
-| `release` | `ubuntu-latest` | `build` succeeding **and** `github.ref == refs/heads/main` |
+| `build-windows` | `windows-latest` | same |
+| `release` | `ubuntu-latest` | **both** builds succeeding **and** `github.ref == refs/heads/main` |
+
+`release` needing both builds is deliberate: one rolling release carries all
+three binaries, so publishing after a half-failed build would leave a release
+whose Windows asset is stale or missing, and `install.ps1` resolves that asset
+by name. The cost is that a red Windows job also blocks a macOS release.
 
 `build` runs gofmt, `go vet`, `go test`, the cgo build, and a smoke test, then
 uploads the binary as a run artifact. So a push to any branch gets you a real
 compile and a downloadable binary without publishing anything.
 
-`release` downloads that same artifact — it never rebuilds — then deletes and
-recreates the `rolling-release` tag and its GitHub release. `install.sh`
-resolves `/releases/latest`, which follows that tag, so a merge to `main` is
-live for every user immediately. There is no staging step.
+`release` downloads those same artifacts — it never rebuilds — then deletes
+and recreates the `rolling-release` tag and its GitHub release. `install.sh`
+resolves `/releases/latest` and `install.ps1` fetches
+`/releases/latest/download/<asset>`; both follow that tag, so a merge to
+`main` is live for every user immediately. There is no staging step.
 
 Runs share one concurrency group per ref. A superseded branch build is
 cancelled; a run on `main` is not, so a release can never be interrupted
@@ -138,6 +181,11 @@ a workflow input. The smoke test writes a dummy key to get past the prompt.
 
 ### Code signing happens on the user's Mac, not in CI
 
+There is no Windows counterpart to any of this. A keyboard hook needs no
+grant, so nothing has to survive an upgrade, and a self-signed Authenticode
+certificate earns no SmartScreen reputation — signing there would be work for
+nothing. `install.ps1` calls `Unblock-File` and that is the whole story.
+
 macOS ties an Accessibility grant to the binary's code signature. Go signs ad
 hoc, which binds the grant to one build's hash, so an upgrade used to need the
 grant removed and re-added by hand. `install.sh` therefore creates a
@@ -155,9 +203,11 @@ with that step.
 ## Code notes
 
 The latency budget after the key is released is the whole point of the
-design. The audio is uploaded *while* the user speaks; the release sends only
+design, on both platforms. The audio is uploaded *while* the user speaks; the release sends only
 the last frame and waits for the API's answer, then pastes natively. Keep
 every step below off that path.
+
+### macOS
 
 - `keyboard/hook_darwin.go` — the event-tap callback must stay non-blocking. It
   pushes onto a channel and returns. Anything slow (network, subprocess, modal
@@ -186,3 +236,48 @@ every step below off that path.
   path, and pbcopy also needed a forced UTF-8 locale under launchd; NSString
   round-trips UTF-8 losslessly on its own. Do not reintroduce subprocesses
   here.
+
+### Windows
+
+- `keyboard/hook_windows.go` — a `WH_KEYBOARD_LL` hook, installed on a locked
+  thread that then pumps messages forever, because Windows will not call a
+  low-level hook on a thread that is not pumping. The callback has the same
+  rule as the macOS event tap and a harsher penalty: exceed
+  `LowLevelHooksTimeout` and Windows silently stops calling you for later
+  events, with no notification and no disabled-tap callback to re-enable from.
+  It pushes onto a channel and returns.
+  The hook swallows the hold key by default. That is why it must ignore its
+  own `SendInput` events by `dwExtraInfo`: without that, the ctrl posted by
+  `paste` reads as the user reaching for the hold key and starts a recording
+  on every paste.
+- `audio/recorder_windows.go` — WASAPI shared mode, event-driven. Initialized
+  once and then started and stopped per dictation, same as the AudioQueue:
+  `IAudioClient::Start` is also what lights Windows' microphone indicator, so
+  a permanently running stream would show the user as permanently listened to.
+  All COM lives on one locked thread; `Stop` signals through an atomic rather
+  than the command channel, because the capture loop is not reading commands
+  while it runs.
+- `audio/convert.go` — downmix and resample, reached only when WASAPI refuses
+  `AUTOCONVERT_PCM` and hands over the raw mix format instead. It box-averages
+  rather than decimating: plain decimation folds everything above 8 kHz back
+  into the speech band, and what the model then hears is not what was said.
+  The resampling window carries across calls, so chunked input must convert
+  identically to whole input — there is a test for exactly that, and it is
+  the one part of the Windows build that is genuinely verified before CI.
+- `audio/com_windows.go` — hand-written COM vtables. Each interface is a
+  struct whose one field points at its vtable, which is how a COM object is
+  laid out, so every out-parameter stays a typed Go pointer and no uintptr is
+  ever converted back into one. `waveFormatExtensible` is spelled out flat
+  rather than embedding `waveFormatEx`: Go pads the inner struct to 20 bytes
+  where C packs it to 18, which would put every field after it at the wrong
+  offset.
+- `paste/paste_windows.go` — the clipboard through the Win32 API, not
+  `Set-Clipboard`; starting a PowerShell host on the paste path would be far
+  worse than the `pbcopy` spawn macOS already refuses. Win32 memory is copied
+  with `RtlMoveMemory` rather than by reshaping a locked address into a Go
+  slice, which keeps `go vet` honest about the uintptr.
+- `platform_windows.go` — writes the embedded chimes beside the config on
+  first run and never overwrites them, so a user's own WAVs survive upgrades.
+  `--background` is what the Run key passes: it redirects output to the log
+  and hides the console. Without the flag the binary behaves like the Mac one
+  run by hand — live output, Ctrl-C to quit.

@@ -172,10 +172,10 @@ func main() {
 		fatal(fmt.Sprintf("Audio player init error: %v", err))
 	}
 	defer player.Close()
-	if err := player.Load(soundStart, "/System/Library/Sounds/Blow.aiff"); err != nil {
+	if err := player.Load(soundStart, startChime); err != nil {
 		fatal(fmt.Sprintf("Load start sound: %v", err))
 	}
-	if err := player.Load(soundEnd, "/System/Library/Sounds/Bottle.aiff"); err != nil {
+	if err := player.Load(soundEnd, endChime); err != nil {
 		fatal(fmt.Sprintf("Load end sound: %v", err))
 	}
 
@@ -254,7 +254,7 @@ func main() {
 		fatal(fmt.Sprintf("Keyboard hook error: %v", err))
 	}
 
-	fmt.Println("whisprgo ready — hold [fn] to dictate. Ctrl-C to quit.")
+	fmt.Printf("whisprgo ready — hold [%s] to dictate. Ctrl-C to quit.\n", holdKeyName)
 
 	<-sig
 	fmt.Println("\nBye.")
