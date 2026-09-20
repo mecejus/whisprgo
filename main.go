@@ -46,6 +46,12 @@ func init() {
 }
 
 func fatal(message string) {
+	// Also to stderr, not only the dialog. Under launchd and under the
+	// Windows Run key that is the log file, and without this line a fatal
+	// error left nothing behind at all: the box is gone as soon as it is
+	// dismissed, and whoever has to work out why whisprgo quit has nothing
+	// to read.
+	fmt.Fprintf(os.Stderr, "\r\033[K%s\n", message)
 	dialog.Error(message)
 	os.Exit(1)
 }
