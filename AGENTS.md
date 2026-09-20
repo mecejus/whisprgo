@@ -297,6 +297,20 @@ every step below off that path.
   worse than the `pbcopy` spawn macOS already refuses. Win32 memory is copied
   with `RtlMoveMemory` rather than by reshaping a locked address into a Go
   slice, which keeps `go vet` honest about the uintptr.
+- `dialog/dialog_windows.go` — the API key prompt borrows WinForms through
+  Windows PowerShell, which is the one subprocess on the Windows side. It runs
+  once, on first launch, never on the dictation path.
+  Start it with `CreationFlags: CREATE_NO_WINDOW`, **never**
+  `SysProcAttr.HideWindow`. HideWindow sets `STARTF_USESHOWWINDOW` with
+  `SW_HIDE`, and that show state is then inherited by the first window the
+  process creates — the dialog itself. It shipped that way once: the box was
+  drawn invisibly, nobody could dismiss it, `ShowDialog` never returned and
+  whisprgo hung at startup having printed nothing at all.
+  Which is the second rule here: a failure in this function must say why.
+  Every path used to `return "", false` silently, so a wedged prompt and a
+  cancelled one looked identical, and the first bug report was "nothing
+  happens". The call is also bounded by a timeout, because a prompt that
+  cannot be answered must fail rather than hang.
 - `platform_windows.go` — writes the embedded chimes beside the config on
   first run and never overwrites them, so a user's own WAVs survive upgrades.
   `--background` is what the Run key passes: it redirects output to the log

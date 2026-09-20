@@ -3,10 +3,14 @@
 package dialog
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -20,6 +24,26 @@ const (
 	mbIconError     = 0x00000010
 	mbSetForeground = 0x00010000
 	mbTopMost       = 0x00040000
+)
+
+const (
+	// createNoWindow keeps the PowerShell host from flashing a console
+	// window.
+	//
+	// Deliberately not SysProcAttr.HideWindow, which is how this was first
+	// written. That sets STARTF_USESHOWWINDOW with SW_HIDE, and SW_HIDE then
+	// becomes the default show state for the *first window the process
+	// creates* — which is the dialog itself. The box was drawn, invisibly, so
+	// nobody could dismiss it, so ShowDialog never returned and whisprgo hung
+	// at startup with no output at all. CREATE_NO_WINDOW suppresses the
+	// console without touching the show state of anything drawn later.
+	createNoWindow = 0x08000000
+
+	// promptTimeout bounds the wait for an answer. Generous, because someone
+	// may go off and create a Groq account first, but finite: a prompt that
+	// cannot be answered has to fail with a message rather than hang the
+	// process forever.
+	promptTimeout = 5 * time.Minute
 )
 
 var messageBoxW = win.Proc("user32.dll", "MessageBoxW")
@@ -55,28 +79,44 @@ func Error(message string) {
 // never on the dictation path — so the cost of starting a PowerShell host
 // does not matter here.
 func Prompt(message string) (string, bool) {
-	script := promptScript(message)
+	ctx, cancel := context.WithTimeout(context.Background(), promptTimeout)
+	defer cancel()
 
 	// -EncodedCommand takes UTF-16LE base64. It sidesteps every layer of
 	// quoting between here and PowerShell's parser, and unlike a script file
 	// it is not subject to the execution policy.
-	cmd := exec.Command("powershell.exe",
+	//
+	// No -NonInteractive: this is a dialog, which is the one thing that
+	// switch exists to suppress.
+	cmd := exec.CommandContext(ctx, "powershell.exe",
 		"-NoProfile",
-		"-NonInteractive",
 		"-Sta", // WinForms requires a single-threaded apartment.
-		"-EncodedCommand", encodeCommand(script),
+		"-EncodedCommand", encodeCommand(promptScript(message)),
 	)
-	// Without this the PowerShell host flashes a console window.
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 
 	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
+	if err != nil {
+		// Every one of these used to be a silent `return "", false`, which is
+		// why the first report of this was "nothing happens". Whatever goes
+		// wrong here, say so: on the installed path this reaches the log.
+		if ctx.Err() != nil {
+			fmt.Fprintf(os.Stderr, "No answer to the API key dialog within %s.\n", promptTimeout)
+		} else {
+			fmt.Fprintf(os.Stderr, "Could not show the API key dialog: %v\n", err)
+		}
 		return "", false
 	}
+	if len(out) == 0 {
+		// The script prints nothing when the dialog is cancelled.
+		return "", false
+	}
+
 	// The answer comes back base64'd too, so neither the console code page
 	// nor a stray newline can corrupt an API key on its way out.
 	decoded, err := base64.StdEncoding.DecodeString(string(out))
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not read the API key back from the dialog: %v\n", err)
 		return "", false
 	}
 	return string(decoded), true
