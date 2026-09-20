@@ -1,1 +1,4 @@
+# Keep the language bar showing what whisprgo actually is. The installers are
+# delivery, not the project.
 *.sh linguist-detectable=false
+*.ps1 linguist-detectable=false
