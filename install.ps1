@@ -100,7 +100,8 @@ Step 'Set to start when you log in.'
 $logStart = 0
 if (Test-Path $logFile) { $logStart = @(Get-Content $logFile -ErrorAction SilentlyContinue).Count }
 
-Start-Process -FilePath $exePath -ArgumentList '--background' | Out-Null
+# -PassThru so the wait loop below can notice if whisprgo gives up.
+$proc = Start-Process -FilePath $exePath -ArgumentList '--background' -PassThru
 
 Write-Host ''
 if ($firstRun) {
@@ -116,6 +117,7 @@ if ($firstRun) {
 # The API key dialog is the slow part, so allow ten minutes.
 $spinner = '|', '/', '-', '\'
 $ready = $false
+$stopped = $false
 for ($ticks = 0; $ticks -lt 2400; $ticks++) {
   if (Test-Path $logFile) {
     $lines = @(Get-Content $logFile -ErrorAction SilentlyContinue)
@@ -124,6 +126,12 @@ for ($ticks = 0; $ticks -lt 2400; $ticks++) {
       if ($fresh -match 'whisprgo ready') { $ready = $true; break }
     }
   }
+  # whisprgo exits when it has no API key to work with, and cancelling the
+  # dialog is the usual way that happens. Checked after the log, so a run
+  # that printed the ready line still counts as ready. Without this the
+  # installer spins for the full ten minutes waiting on a process that is
+  # already gone.
+  if ($proc -and $proc.HasExited) { $stopped = $true; break }
   Write-Host -NoNewline ("`r{0} {1}... {2}s   " -f $spinner[$ticks % 4], $waitMsg, [int]($ticks / 4))
   Start-Sleep -Milliseconds 250
 }
@@ -134,6 +142,24 @@ if ($ready) {
   Write-Host ''
   Write-Host 'To watch it work, run it in a terminal instead:'
   Write-Host "  & `"$exePath`""
+} elseif ($stopped) {
+  Write-Host 'whisprgo stopped before it was ready.'
+
+  # fatal() writes the reason to stderr as well as showing it in a box, so
+  # the last line of this launch's log says what went wrong.
+  $reason = ''
+  if (Test-Path $logFile) {
+    $lines = @(Get-Content $logFile -ErrorAction SilentlyContinue)
+    if ($lines.Count -gt $logStart) {
+      $reason = $lines[$logStart..($lines.Count - 1)] |
+        Where-Object { $_.Trim() } | Select-Object -Last 1
+    }
+  }
+  if ($reason) { Write-Host "  $reason" }
+
+  Write-Host ''
+  Write-Host 'If you cancelled the API key box, that is all this is. whisprgo asks'
+  Write-Host 'again next time you log in, or run the install line again now.'
 } else {
   Write-Host 'Still waiting, and that is fine. whisprgo is running in the background'
   Write-Host 'and will be ready as soon as it has your API key.'
