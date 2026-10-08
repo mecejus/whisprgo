@@ -10,13 +10,6 @@ The platform-neutral half (the FLAC encoder, the capture buffer, the streaming
 Groq client, config) is shared; `keyboard`, `paste`, `dialog` and the
 recorder/player halves of `audio` are split by build tag.
 
-## Output style
-
-Apply the `i-have-adhd` skill (`.claude/skills/i-have-adhd/SKILL.md`) to every
-response in this repository, from the first turn, without waiting to be asked.
-Read that file at session start and follow it. It stays on until the user says
-"stop adhd mode" or "normal mode".
-
 ## Delivery workflow
 
 The loop is: the user prompts a cloud session, it builds the thing, opens a PR,
