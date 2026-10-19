@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"whisprgo/audio"
 	"whisprgo/config"
@@ -71,6 +72,26 @@ func reportError(format string, args ...any) {
 		defer dialogOpen.Store(false)
 		dialog.Error(msg)
 	}()
+}
+
+// stdoutIsTerminal reports whether finished dictations may be echoed with
+// their text. Only a terminal qualifies: run by hand, seeing what was heard
+// is the point of the line. Under launchd and under the Windows Run key
+// stdout is whisprgo.log, and printing there built a plain-text record of
+// everything the user had ever dictated — a transcript of their day sitting
+// on disk, which nothing in whisprgo ever reads back. The paste is how the
+// text gets delivered; the log does not need a copy.
+//
+// Call this from main, never from a package-level initializer: on Windows
+// --background replaces os.Stdout with the log file in init, and package
+// variables are evaluated before init runs, so an initializer here would
+// still see the Run key's console and echo into the log.
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // job is one dictation, from the key going down to the text being pasted.
@@ -198,6 +219,7 @@ func main() {
 	// next press. Jobs are queued in the order dictations began and pasted in
 	// that order, however their transcriptions come back.
 	jobs := make(chan *job, queueDepth)
+	echoText := stdoutIsTerminal()
 	go func() {
 		for j := range jobs {
 			<-j.done
@@ -205,7 +227,13 @@ func main() {
 				continue
 			}
 			wait := time.Since(time.Unix(0, j.released.Load()))
-			fmt.Printf("\r\033[K✓ %s  [%d ms after release]\n", j.text, wait.Milliseconds())
+			if echoText {
+				fmt.Printf("\r\033[K✓ %s  [%d ms after release]\n", j.text, wait.Milliseconds())
+			} else {
+				// The length still tells you a dictation landed whole, which
+				// is what the log is read for, without recording the words.
+				fmt.Printf("\r\033[K✓ %d chars  [%d ms after release]\n", utf8.RuneCountInString(j.text), wait.Milliseconds())
+			}
 			if err := paste.Paste(j.text); err != nil {
 				reportError("Paste error: %v", err)
 			}
