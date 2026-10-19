@@ -201,6 +201,18 @@ design, on both platforms. The audio is uploaded *while* the user speaks; the re
 the last frame and waits for the API's answer, then pastes natively. Keep
 every step below off that path.
 
+Dictated text never goes to the log. `main.go` echoes a finished dictation
+with its text only when stdout is a terminal — someone running the binary by
+hand, who wants to see what was heard. Under launchd and under the Windows Run
+key stdout *is* `~/.config/whisprgo/whisprgo.log`, where that line used to
+accumulate a plain-text record of everything the user had ever said, which
+nothing in whisprgo reads back. The log gets a length and a latency instead.
+Do not add a print of the transcript that is not behind that check, and do not
+hoist the check into a package-level variable: Windows' `--background`
+replaces `os.Stdout` with the log file in `init`, and package variables are
+evaluated first, so an initializer would still see the Run key's console and
+echo into the log.
+
 ### macOS
 
 - `keyboard/hook_darwin.go` — the event-tap callback must stay non-blocking. It
