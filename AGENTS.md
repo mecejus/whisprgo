@@ -10,17 +10,19 @@ The platform-neutral half (the FLAC encoder, the capture buffer, the streaming
 Groq client, config) is shared; `keyboard`, `paste`, `dialog` and the
 recorder/player halves of `audio` are split by build tag.
 
+## Where this runs
+
+Either a Claude Code cloud session (Linux, fresh clone) or Mindaugas's Mac
+(`~/Projects/whisprgo`). The loop is the same in both: branch, PR, merge, and
+the merge publishes a release. Never publish by hand (no manual `gh release`,
+no push to `main`). On the Mac, check Go exists (`command -v go`) before relying
+on it; if it is missing, lean on CI rather than installing it unasked.
+
 ## Delivery workflow
 
-The loop is: the user prompts a cloud session, it builds the thing, opens a PR,
-squash-merges it, the merge publishes a release, the branch auto-deletes, the
-user moves on. Do the whole loop — a merged PR with a red or unwatched build is
-not finished work. Watch the run to green before reporting done.
-
-**There is no local machine in this loop.** Never propose a step that needs the
-user's laptop — no local `go build`, no Xcode, no manual `gh release`. The one
-thing only they can do is install the published binary on their own Mac and
-speak into it; everything up to that point happens here.
+Do the whole loop — a merged PR with a red or unwatched build is not finished
+work. Watch the run to green before reporting done. What only a person can do
+is install the published binary and speak into it.
 
 ### Land work through a PR, not a push to main
 
@@ -40,9 +42,16 @@ the PR is there for:
 Squash-merge unless the branch's individual commits are worth keeping.
 
 After the merge, do not keep working on the old branch — it no longer exists on
-the remote. Restart it from `main` as described under Branch auto-deletion.
+the remote. Restart it from `main` as described under After a merge.
 
-### You cannot compile the macOS build in a cloud session. You can compile the Windows one.
+### On the Mac, the macOS build compiles locally
+
+With Go installed, `go build .`, `go vet ./...` and `go test ./...` run the real
+cgo build, and the binary can be run by hand. That still does not replace CI:
+the release ships CI's artifact, and the Windows half below is checked the same
+way everywhere.
+
+### In a cloud session you cannot compile the macOS build. You can compile the Windows one.
 
 The session runs on Linux. The darwin files in `main`, `keyboard`, `paste`,
 `dialog` and `audio` are cgo against CoreGraphics, AudioToolbox, AppKit and
@@ -85,32 +94,24 @@ What this means in practice:
    runners have no microphone, so `Prime` failing there is expected and
    non-fatal. Those need a real Mac and a real PC.
 
-Do not claim macOS code compiles until a run says so.
+Do not claim macOS code compiles until a CI run, or a build on the Mac, says so.
 
 ### PowerShell is not compiled, so CI parses it
 
-`install.ps1` and `uninstall.ps1` cannot be checked here — the session has no
-PowerShell. The Windows CI job runs both through
+`install.ps1` and `uninstall.ps1` cannot be checked in a session — neither the
+cloud nor the Mac has PowerShell. The Windows CI job runs both through
 `[System.Management.Automation.Language.Parser]::ParseFile`, which catches a
 syntax error that would otherwise only surface on a user's PC. Do not weaken
 that step.
 
-### Branch auto-deletion
+### After a merge
 
-GitHub deletes the head branch on merge. Two consequences when the same session
-continues after a merge:
+GitHub deletes the head branch, so continuing on it fails (`couldn't find
+remote ref`, or `stale info` from `--force-with-lease` — not a race). Restart
+from main; never stack commits on merged history:
 
-- `git fetch origin <branch>` fails with `couldn't find remote ref`.
-- The stale local remote-tracking ref makes `git push --force-with-lease` fail
-  with `stale info`, which looks like a race but is not one.
-
-Restart the branch from the merged default branch instead. Never stack new
-commits on already-merged history:
-
-    git remote prune origin
-    git fetch origin main
-    git checkout -B <branch> origin/main
-    git push -u origin <branch>          # plain push; the branch is new again
+    git remote prune origin && git fetch origin main
+    git checkout -B <branch> origin/main && git push -u origin <branch>
 
 ### What a merge actually publishes
 
