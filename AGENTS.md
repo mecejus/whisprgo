@@ -15,8 +15,16 @@ recorder/player halves of `audio` are split by build tag.
 Either a Claude Code cloud session (Linux, fresh clone) or Mindaugas's Mac
 (`~/Projects/whisprgo`). The loop is the same in both: branch, PR, merge, and
 the merge publishes a release. Never publish by hand (no manual `gh release`,
-no push to `main`). On the Mac, check Go exists (`command -v go`) before relying
-on it; if it is missing, lean on CI rather than installing it unasked.
+no push to `main`).
+
+**CI is the default way work gets verified, and the route to prefer.** Push the
+branch and read the run. Do not install a Go toolchain to get a local build,
+and do not treat a local build as the gate: on the Mac there is normally no Go
+at all, and that is the expected state rather than something to fix. Where a
+toolchain does happen to exist, the checks under *In a cloud session* below are
+worth running first only because they catch the cheap failures — formatting, a
+Windows vet error — a round trip sooner. They are a shortcut into a green CI
+run, never a replacement for one.
 
 ## Delivery workflow
 
@@ -44,12 +52,16 @@ Squash-merge unless the branch's individual commits are worth keeping.
 After the merge, do not keep working on the old branch — it no longer exists on
 the remote. Restart it from `main` as described under After a merge.
 
-### On the Mac, the macOS build compiles locally
+### On the Mac there is normally no Go toolchain
 
-With Go installed, `go build .`, `go vet ./...` and `go test ./...` run the real
-cgo build, and the binary can be run by hand. That still does not replace CI:
-the release ships CI's artifact, and the Windows half below is checked the same
-way everywhere.
+`command -v go` comes back empty, so `go build .`, `go vet ./...` and
+`go test ./...` are simply not available there — and installing them is not
+wanted. The macOS half is compiled by CI from the Mac exactly as it is from a
+cloud session, and the release ships CI's artifact either way, so nothing is
+lost by it.
+
+To get a binary to run by hand, download the artifact from the branch push
+(see *Release operations*) rather than building one.
 
 ### In a cloud session you cannot compile the macOS build. You can compile the Windows one.
 
@@ -94,7 +106,7 @@ What this means in practice:
    runners have no microphone, so `Prime` failing there is expected and
    non-fatal. Those need a real Mac and a real PC.
 
-Do not claim macOS code compiles until a CI run, or a build on the Mac, says so.
+Do not claim macOS code compiles until a CI run says so.
 
 ### PowerShell is not compiled, so CI parses it
 
